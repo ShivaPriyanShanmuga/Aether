@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt · clippy · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain (channel + components) is pinned by rust-toolchain.toml, so
+      # the first cargo invocation installs exactly what the repo requires.
+      - name: Show toolchain
+        run: rustup show
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      # Clippy runs the rustc lint set too, so `-D warnings` here gates both the
+      # workspace lint policy (see Cargo.toml) and clippy's own lints. Build/test
+      # below intentionally do not force `-D warnings`, so future third-party
+      # dependency warnings never fail our CI.
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --all-targets --verbose
+
+      - name: Test
+        run: cargo test --all --verbose

@@ -1,0 +1,7 @@
+# Pin the toolchain so every contributor and CI run builds with the same
+# compiler and the components we rely on. Bumping this is a deliberate act
+# recorded in the changelog / commit history.
+[toolchain]
+channel = "1.89.0"
+components = ["rustfmt", "clippy"]
+profile = "default"

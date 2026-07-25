@@ -1,0 +1,44 @@
+# Aether — workspace root.
+#
+# This is a Cargo *workspace*: every compiler subsystem lives in its own crate
+# under `crates/`, sharing version, edition, and lint policy from here. Today the
+# workspace has a single member (the `aetherc` driver); the planned crate graph
+# is documented in ARCHITECTURE.md and materialized incrementally, one milestone
+# at a time, so no crate exists before something actually depends on it.
+
+[workspace]
+resolver = "3"
+members = ["crates/aetherc"]
+
+# Shared package metadata. Member crates inherit these via `field.workspace = true`.
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+authors = ["The Aether Project Contributors"]
+
+# ---------------------------------------------------------------------------
+# Lint policy — enforced uniformly across every crate and target in the
+# workspace. Member crates opt in with `[lints] workspace = true`. CI compiles
+# with `-D warnings`, so these effectively gate merges. The policy is strict but
+# not pedantic; we tighten it deliberately (see CONTRIBUTING.md) rather than
+# starting maximally noisy.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+# `unsafe` must be justified. Individual crates that genuinely need it (e.g. a
+# future codegen backend) may downgrade this locally with a documented rationale.
+unsafe_code = "deny"
+# Public API items must be documented — the project treats docs as a deliverable.
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+# Prefer the tightest visibility that works.
+unreachable_pub = "warn"
+# A lint *group*, so it must sit below the individual lints above (Cargo requires
+# groups to have a lower priority than specific lints).
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# The full `clippy::all` set at warn. `priority = -1` keeps it below any specific
+# lint overrides we add later.
+all = { level = "warn", priority = -1 }

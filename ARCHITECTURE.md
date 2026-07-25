@@ -1,0 +1,165 @@
+# Aether — Architecture
+
+This document describes the high-level architecture of the Aether compiler
+platform: its pipeline, its crate structure, the rules that keep it modular, and
+the design principles that govern change. It is updated whenever the architecture
+changes. For *why* specific choices were made, see [`DECISIONS.md`](DECISIONS.md).
+
+---
+
+## 1. Overview
+
+Aether translates source text written in the (small, growing) Aether language
+into an executable result. It is structured as a classic multi-phase compiler
+with a strong, reusable middle end built around a custom intermediate
+representation, **AIR (Aether Intermediate Representation)**.
+
+The guiding architectural idea is **separation by phase and by crate**: each
+stage of compilation is an independently testable library with a narrow,
+well-documented interface, coordinated by a thin driver. No stage reaches across
+another stage's internals; they communicate through explicit data structures
+(token streams, ASTs, AIR modules).
+
+---
+
+## 2. Compilation pipeline
+
+```
+                 ┌─────────────────────────────────────────────────────────┐
+                 │                    Compilation Session                   │
+                 │   (config, source map, diagnostics sink, interners)      │
+                 └─────────────────────────────────────────────────────────┘
+                          │ cross-cutting context, threaded through phases
+   source (.ae)           ▼
+     │
+     ▼
+ ┌────────┐   tokens   ┌────────┐   AST    ┌──────────┐  typed AST  ┌──────────┐
+ │ Lexer  │ ─────────▶ │ Parser │ ───────▶ │  Semantic │ ─────────▶ │   AIR    │
+ └────────┘            └────────┘          │  Analysis │            │ Lowering │
+                                           └──────────┘            └──────────┘
+                                                                        │ AIR
+                                                                        ▼
+                                        ┌──────────────────────────────────────┐
+                                        │      Middle end (over AIR modules)     │
+                                        │  Analyses  ◀──▶  Optimization passes   │
+                                        └──────────────────────────────────────┘
+                                                                        │ optimized AIR
+                                          ┌─────────────────────────────┴───────┐
+                                          ▼                                       ▼
+                                   ┌──────────────┐                       ┌──────────────┐
+                                   │ AIR Interp.  │  (first target)       │ Native codegen│  (future)
+                                   │  → result    │                       │  → machine code│
+                                   └──────────────┘                       └──────────────┘
+```
+
+**Cross-cutting concerns** (diagnostics, source management, string/symbol
+interning, and the compilation session that owns them) are available to every
+phase and are *not* themselves phases.
+
+---
+
+## 3. Crate structure
+
+Aether is a Cargo workspace. Each subsystem is its own crate so it can be built,
+tested, and reasoned about in isolation. **Crates are materialized only when a
+real consumer needs them** — we do not create empty placeholder crates. The table
+below therefore distinguishes what exists today from what is planned.
+
+| Crate | Responsibility | Status |
+| --- | --- | --- |
+| `aetherc` | Command-line driver; orchestrates phases | **exists** |
+| `aether-source` | Source files, `Span`, byte↔line/column mapping | planned (M1) |
+| `aether-diagnostics` | Diagnostics: errors/warnings, rendering | planned (M1) |
+| `aether-support` | Shared primitives: arenas, interners, data structures | planned (as needed) |
+| `aether-lexer` | Lexical analysis → token stream | planned (M2) |
+| `aether-ast` | AST node definitions | planned (M3) |
+| `aether-parser` | Recursive-descent parser → AST | planned (M3) |
+| `aether-air` | AIR data structures, builder, verifier, textual printer/parser | planned (M4) |
+| `aether-air-interp` | AIR interpreter (first execution target) | planned (M5) |
+| `aether-sema` | Name resolution and type checking | planned (Phase 2) |
+| `aether-analysis` | Analysis framework (CFG, dominators, dataflow, …) | planned (Phase 3) |
+| `aether-opt` | Pass manager and optimization passes | planned (Phase 3) |
+| `aether-codegen` | Backend framework and native targets | planned (Phase 4) |
+
+Some cross-cutting crates (`aether-source`, `aether-diagnostics`, `aether-support`)
+may begin life merged and split apart once their surface justifies it; the split
+above is the intended end state, not a mandate to create thin crates early.
+
+### Dependency rules
+
+To keep the graph acyclic and the coupling loose, dependencies flow in one
+direction:
+
+1. **Foundational crates depend on nothing project-specific.** `aether-support`,
+   `aether-source`, and `aether-diagnostics` sit at the bottom and may be used by
+   anyone.
+2. **Frontend → IR → backend, never backwards.** The parser does not know about
+   AIR; AIR does not know about any backend; a backend does not know about the
+   parser. Earlier stages must never depend on later ones.
+3. **The driver (`aetherc`) sits on top** and is the only crate allowed to know
+   about all phases, because its job is to connect them.
+4. **No cycles, ever.** If two crates seem to need each other, the shared concept
+   belongs in a lower foundational crate.
+
+---
+
+## 4. Cross-cutting components
+
+- **Compilation Session / Context.** A single owner for per-compilation state:
+  configuration, the source map, the diagnostics sink, and interners. Threaded
+  explicitly through phases (no global mutable state), which keeps the compiler
+  testable and, eventually, safe to parallelize.
+- **Diagnostics.** A structured diagnostics engine (severity, primary/secondary
+  spans, notes, suggestions) with rendering separated from construction. Phases
+  *emit* diagnostics into the session rather than printing directly.
+- **Source management.** A source map assigns stable identifiers to files and
+  maps byte offsets (`Span`s) to line/column positions for diagnostics. Spans are
+  carried on tokens and AST nodes from the very first phase.
+
+---
+
+## 5. AIR — direction
+
+AIR is intended to be the reusable heart of the platform. Its detailed design is
+deferred to its own milestone (see the roadmap), but the intended direction —
+recorded so later work has a north star, **not yet ratified in detail** — is:
+
+- **Typed** — every value has an AIR type; the IR is checkable.
+- **SSA-based** with a control-flow graph of basic blocks — the mainstream shape
+  for a modern optimizing IR, which makes dataflow analyses and optimizations
+  natural to express.
+- **Textual round-trippable** — a human-readable form that can be printed and
+  re-parsed, which is invaluable for testing (golden/`FileCheck`-style tests) and
+  debugging.
+- **Verifiable** — a verifier checks structural invariants (well-formed CFG,
+  dominance of definitions over uses, type agreement) and runs in debug/test
+  builds.
+- **Target-independent** — no hardware assumptions leak into AIR; that is the
+  backend's concern.
+
+See [`DECISIONS.md`](DECISIONS.md) ADR-0006 for the status of this direction.
+
+---
+
+## 6. Design principles
+
+- **Architecture before implementation.** Design, weigh alternatives, then build.
+- **No premature abstraction.** Introduce a crate, trait, or generalization only
+  when a concrete second use or clear need justifies it.
+- **Everything is testable in isolation.** Each phase takes explicit inputs and
+  produces explicit outputs; no hidden global state.
+- **Documentation is a deliverable.** Public items are documented (`missing_docs`
+  is enforced); design rationale lives in these documents.
+- **Measure before optimizing.** Performance work is guided by benchmarks
+  (see [`BENCHMARKS.md`](BENCHMARKS.md)), not guesses.
+- **The repository is the source of truth.** These documents, not any external
+  memory, define the current state and plan.
+
+---
+
+## 7. Extension points (future)
+
+The architecture is intended to absorb, without rewrites: additional language
+features (frontend), additional analyses and optimization passes (middle end),
+additional backends/targets (backend), and developer tooling (visualizers,
+statistics). Each is an addition at an established seam, not a structural change.

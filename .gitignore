@@ -1,0 +1,19 @@
+# Build artifacts
+/target
+
+# Cargo.lock is intentionally committed: this workspace produces a binary
+# (`aetherc`), and pinning the full dependency graph makes builds reproducible.
+
+# Rust backup files
+**/*.rs.bk
+*.pdb
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS clutter
+.DS_Store
+Thumbs.db

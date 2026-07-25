@@ -1,0 +1,174 @@
+# Aether — Architecture Decision Records
+
+This file records significant architectural decisions as **ADRs**. Each entry
+captures the context, the alternatives weighed, the decision, and its
+consequences, so that future contributors understand *why* the system is the way
+it is — and can revisit a decision deliberately rather than by accident.
+
+ADRs are append-only and immutable once **Accepted**. To reverse one, add a new
+ADR that supersedes it and update the older entry's status. Status values:
+Proposed · Accepted · Superseded · Deprecated.
+
+---
+
+## ADR-0001 — Implement Aether in Rust
+
+**Status:** Accepted
+
+**Context.** Aether is a long-lived, correctness- and performance-sensitive
+compiler platform expected to exceed 100k lines and attract contributors.
+
+**Alternatives considered.**
+- **C++** — closest to LLVM/GCC/MLIR with vast prior art; but manual memory
+  management, slower iteration, and a weaker default build/tooling story.
+- **Zig** — modern and simple with fine control; but a young ecosystem and
+  unproven at large-compiler scale.
+- **Go** — fast builds and easy concurrency; but GC and weak sum types make
+  expressing rich ASTs/IR awkward.
+
+**Decision.** Use **Rust**.
+
+**Rationale.** Algebraic data types with exhaustive pattern matching map directly
+onto ASTs and IR nodes; memory safety without a GC suits a performance-focused
+platform; Cargo workspaces give clean, independently testable module boundaries;
+and Rust is *proven at exactly this task* (rustc, Cranelift, rust-analyzer).
+
+**Consequences.** Rust's ownership model shapes IR data-structure design (arenas,
+indices, and interners rather than pervasive pointers). Excellent built-in
+tooling (cargo, clippy, rustfmt, test harness) is available from day one.
+
+---
+
+## ADR-0002 — Compile a custom minimal source language
+
+**Status:** Accepted
+
+**Context.** A compiler platform needs an input language.
+
+**Alternatives considered.**
+- **C subset** — well-specified semantics and abundant real test programs; but
+  the preprocessor, undefined behavior, and type system make the early frontend
+  far heavier.
+- **Start from textual AIR** — defer the frontend and build the middle/back end
+  first; faster to codegen work but a less complete-compiler experience early.
+
+**Decision.** Design a **small, growable custom language** (source extension
+`.ae`), beginning with integers, functions, and control flow.
+
+**Rationale.** Full control over semantics keeps the early frontend tractable and
+aligns with the long-term ecosystem vision (own language, standard library, and
+tooling). We can grow the language exactly in step with the compiler's needs.
+
+**Consequences.** We own language design decisions and must specify semantics as
+we go. The language will start deliberately tiny to enable an end-to-end slice.
+
+---
+
+## ADR-0003 — Build a thin vertical slice first
+
+**Status:** Accepted
+
+**Context.** The platform has many subsystems (frontend, IR, analyses,
+optimizations, backends). They can be built breadth-first (frameworks first),
+depth-first (finish the frontend first), or as a thin end-to-end slice.
+
+**Decision.** Build a **thin vertical slice** — a trivial program compiled and run
+end to end — before deepening any single subsystem.
+
+**Rationale.** An end-to-end path validates the architecture against a real
+consumer early, surfaces interface problems between phases while they are cheap to
+fix, and produces a runnable artifact that every later milestone extends.
+
+**Consequences.** Early subsystems are intentionally minimal and will be revisited
+and hardened in later phases; each such simplification is tracked in
+[`TECH_DEBT.md`](TECH_DEBT.md).
+
+---
+
+## ADR-0004 — First execution target is an AIR interpreter
+
+**Status:** Accepted
+
+**Context.** The first vertical slice needs a way to actually run programs.
+
+**Alternatives considered.**
+- **Native x86-64 directly** — most impressive result; but register allocation
+  and ABI details make early progress slow and error-prone.
+- **WebAssembly** — clean, portable target, but still real codegen work.
+- **LLVM IR backend** — fastest path to optimized native binaries, but a heavy
+  external dependency that weakens the "our own backend" story.
+
+**Decision.** Implement an **AIR interpreter** as the first backend.
+
+**Rationale.** An interpreter validates AIR's semantics and, later, the
+correctness of optimization passes without the complexity of codegen. It is the
+fastest route to a correct, fully testable pipeline. A native backend follows in
+Phase 4, once AIR is proven.
+
+**Consequences.** The interpreter is a permanent asset — a semantic reference and
+a differential-testing oracle for native backends — not throwaway work.
+
+---
+
+## ADR-0005 — Cargo workspace with per-subsystem crates
+
+**Status:** Accepted
+
+**Context.** The codebase must stay modular, loosely coupled, and independently
+testable as it grows past 100k lines.
+
+**Decision.** Use a **Cargo workspace**; each subsystem is its own crate, with
+dependencies flowing frontend → IR → backend and foundational crates at the
+bottom (see [`ARCHITECTURE.md`](ARCHITECTURE.md) §3). Shared version, edition, and
+lint policy live at the workspace root.
+
+**Rationale.** Crate boundaries enforce architectural boundaries at compile time:
+a cycle or an illegal dependency simply will not compile. Workspace-level lints
+apply one standard everywhere.
+
+**Consequences.** Crates are created **only when a real consumer needs them** — no
+empty placeholder crates. The workspace begins with a single member (`aetherc`)
+and grows one milestone at a time.
+
+---
+
+## ADR-0006 — AIR is a typed, SSA-based, textual, verifiable IR
+
+**Status:** Proposed *(direction only; to be ratified in the AIR milestone, M4)*
+
+**Context.** AIR is the reusable core of the platform; its shape strongly affects
+how easy analyses, optimizations, and backends are to write.
+
+**Direction.** AIR is intended to be typed, SSA-based over a CFG of basic blocks,
+round-trippable through a textual form, and checked by a verifier. Alternatives
+(e.g. a non-SSA IR with explicit variables) are simpler up front but weaker for
+optimization.
+
+**Why record it now.** So earlier milestones aim at a consistent target. The
+**detailed** design (instruction set, type system, textual grammar) is
+intentionally deferred to M4 to avoid over-committing before we have a real
+lowering and interpreter informing it.
+
+**Consequences.** This ADR will be replaced by an **Accepted** ADR once the AIR
+design is finalized against a working lowering and interpreter.
+
+---
+
+## ADR-0007 — Dependency-minimal foundation
+
+**Status:** Accepted
+
+**Context.** Early dependencies are easy to add and hard to remove, and each one
+is a maintenance and supply-chain commitment.
+
+**Decision.** Keep the foundation **dependency-free**: edition 2024, a pinned
+stable toolchain, and a hand-rolled CLI in `aetherc` for now. Third-party crates
+are added only when they clearly earn their place.
+
+**Rationale.** A trivially small CLI does not justify a dependency yet. Staying
+lean keeps builds fast and the trust surface small while the design settles.
+
+**Consequences.** When the CLI surface grows (subcommands, many flags), we will
+migrate argument parsing to `clap` — tracked in [`TECH_DEBT.md`](TECH_DEBT.md).
+The MIT license was chosen for simplicity; dual MIT/Apache-2.0 (the Rust-ecosystem
+norm) remains an easy future option.
