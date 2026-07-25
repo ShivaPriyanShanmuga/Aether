@@ -121,6 +121,13 @@ pub enum Expr {
         /// The literal's span.
         span: Span,
     },
+    /// A boolean literal, `true` or `false`.
+    BoolLit {
+        /// The literal's value.
+        value: bool,
+        /// The literal's span.
+        span: Span,
+    },
     /// A unary operation, e.g. `-x`.
     Unary {
         /// The operator.
@@ -162,6 +169,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::IntLit { span, .. }
+            | Expr::BoolLit { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Name { span, .. }
@@ -171,6 +179,10 @@ impl Expr {
 }
 
 /// A binary operator.
+///
+/// This groups the arithmetic operators (which produce an integer) and the
+/// comparison operators (which produce a boolean); they are syntactically
+/// uniform infix operators, and lowering distinguishes them by kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinOp {
     /// Addition, `+`.
@@ -181,6 +193,18 @@ pub enum BinOp {
     Mul,
     /// Division, `/`.
     Div,
+    /// Equality, `==`.
+    Eq,
+    /// Inequality, `!=`.
+    Ne,
+    /// Less-than, `<`.
+    Lt,
+    /// Less-than-or-equal, `<=`.
+    Le,
+    /// Greater-than, `>`.
+    Gt,
+    /// Greater-than-or-equal, `>=`.
+    Ge,
 }
 
 impl BinOp {
@@ -192,7 +216,23 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
         }
+    }
+
+    /// Whether this operator is a comparison (producing a boolean) rather than
+    /// an arithmetic operator (producing an integer).
+    #[must_use]
+    pub fn is_comparison(self) -> bool {
+        matches!(
+            self,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+        )
     }
 }
 
@@ -201,6 +241,8 @@ impl BinOp {
 pub enum UnOp {
     /// Arithmetic negation, `-`.
     Neg,
+    /// Logical negation, `!`.
+    Not,
 }
 
 impl UnOp {
@@ -209,6 +251,7 @@ impl UnOp {
     pub fn symbol(self) -> &'static str {
         match self {
             UnOp::Neg => "-",
+            UnOp::Not => "!",
         }
     }
 }
@@ -256,6 +299,21 @@ mod tests {
         assert_eq!(BinOp::Sub.symbol(), "-");
         assert_eq!(BinOp::Mul.symbol(), "*");
         assert_eq!(BinOp::Div.symbol(), "/");
+        assert_eq!(BinOp::Eq.symbol(), "==");
+        assert_eq!(BinOp::Ne.symbol(), "!=");
+        assert_eq!(BinOp::Lt.symbol(), "<");
+        assert_eq!(BinOp::Le.symbol(), "<=");
+        assert_eq!(BinOp::Gt.symbol(), ">");
+        assert_eq!(BinOp::Ge.symbol(), ">=");
         assert_eq!(UnOp::Neg.symbol(), "-");
+        assert_eq!(UnOp::Not.symbol(), "!");
+    }
+
+    #[test]
+    fn comparison_classification() {
+        assert!(BinOp::Lt.is_comparison());
+        assert!(BinOp::Eq.is_comparison());
+        assert!(!BinOp::Add.is_comparison());
+        assert!(!BinOp::Div.is_comparison());
     }
 }

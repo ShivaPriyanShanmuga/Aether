@@ -469,3 +469,110 @@ shadowing rules yet (TD-0027) — those arrive with control-flow blocks. `let` h
 no type annotation (only `int` is inferred; the `:` token and annotations are
 deferred, TD-0028). When the M9 name-resolution pass lands, lowering will assume
 resolved names and this ADR will be revisited.
+
+---
+
+## ADR-0017 — SSA control-flow merges use block parameters, not phi nodes
+
+**Status:** Accepted *(settles the question left open in
+[ADR-0013](#adr-0013--air-ratified-design); implemented in M6 slice 2b)*
+
+**Context.** Control flow (M6 slice 2) introduces basic blocks that merge: a
+value's definition can depend on which predecessor edge executed (e.g.
+`let m = if c { 10 } else { 20 };`). SSA needs a single name for such a merged
+value. ADR-0013 deliberately deferred the choice between the two standard
+representations until control flow landed; it must be made now because it shapes
+the terminator set, the block structure, the verifier's dominance rule, the
+interpreter's transfer logic, and every future analysis (TD-0019).
+
+**Alternatives considered.**
+- **Phi nodes** (LLVM, GCC, classic SSA). A `phi` pseudo-instruction at the top
+  of a merge block selects a value per incoming predecessor:
+  `%m = phi [%a, then], [%b, else]`. *Pros:* fits the current model with zero
+  change (a phi is just another instruction, so `Value` stays "instruction
+  result"); best-documented in the literature. *Cons:* a phi's operand list must
+  stay in lockstep with the block's predecessor list, so every CFG edit (edge
+  split, predecessor removal, jump threading) must rewrite phis — a well-known
+  bug source; critical edges cannot carry the transfer and force edge-splitting;
+  and the dominance invariant needs a special carve-out (a phi operand is not
+  dominated by the phi's block but must dominate the end of its corresponding
+  predecessor).
+- **Block parameters** (Cranelift, MLIR, Swift SIL). Blocks take typed
+  parameters like functions; each branch passes arguments along its edge:
+  `br join(%a)` / `br join(%b)`, with `join(%m: int):`. *Pros:* the branch *is*
+  the predecessor correspondence, so there is no separate list to keep in sync
+  and CFG edits stay local; critical edges are handled naturally; one uniform
+  dominance rule ("every use, including a branch argument, is dominated by its
+  definition") with no phi carve-out. *Cons:* `Value` can no longer mean "result
+  of an instruction" — it becomes "instruction result *or* block parameter",
+  requiring a unified value table (a contained refactor of `aether-air`),
+  superseding the 1:1 value↔instruction assumption of ADR-0013.
+
+**Decision.** AIR represents SSA merges with **block parameters**. Branch
+terminators carry per-edge argument lists; a block declares typed parameters that
+its predecessors supply.
+
+**Rationale.** This platform's charter prioritizes long-term architecture and
+maintainability, and its roadmap is heavy on middle-end analyses/optimizations
+(Phase 3) and codegen (Phase 4), where edge-splitting and CFG rewriting are
+routine. Block parameters make those transformations local and keep a single,
+uniform dominance invariant — the properties Cranelift and MLIR were designed
+around, and the idiomatic choice for a Rust compiler. The one real cost, the
+`Value`-model refactor, is best paid now while the IR is tiny rather than after
+many passes assume value-is-instruction.
+
+**Consequences.** Implemented in M6 slice 2b. This ADR is recorded up front (in
+slice 2a) so the surrounding work aims at a consistent target — mirroring how
+ADR-0006 recorded AIR's direction ahead of ADR-0013. Planned representation: a
+unified `values` table where each value's definition is either an instruction
+result or the *i*-th parameter of a block, each carrying its `Type`; `Terminator`
+gains `br`/`condbr` variants carrying argument lists; the verifier moves to a
+dominance-based def-before-use check that treats block parameters uniformly.
+Straight-line code (through slice 2a) is unaffected: with no merges, no block
+parameters are created and the current value model still holds. This settles the
+open question in TD-0019.
+
+---
+
+## ADR-0018 — Booleans, comparisons, and a runtime value enum (provisional)
+
+**Status:** Accepted *(provisional; formalized with the type system, M8)*
+
+**Context.** M6 slice 2a adds booleans and comparison/logical operators as the
+prerequisite for control flow, before a real type system exists (M8). Two things
+need deciding provisionally: how `bool` and `int` coexist in AIR without a
+checker, and how the interpreter represents values now that there is more than
+one type.
+
+**Decision.**
+- AIR gains a second type, `Type::Bool`, alongside `Type::Int`, plus a boolean
+  constant (`bconst`), an integer comparison instruction (`icmp <cond>`)
+  producing `bool`, and a logical-not unary (`not`). Comparisons are their own
+  instruction family (distinct from arithmetic `Binary`) because they map `int`s
+  to a `bool`.
+- Type consistency is enforced by the **AIR verifier** (there is no separate
+  checker yet): `neg` and arithmetic require `int`, `not` requires `bool`,
+  relational comparisons require `int`, equality (`==`/`!=`) requires both
+  operands to share a type, and each instruction's declared result type must
+  match what its operation produces. This is the provisional stand-in for
+  semantic type checking (TD-0026, M8).
+- The interpreter represents a runtime value as a public
+  `RunValue { Int(i64), Bool(bool) }` enum. `interpret`/`run_function` return
+  `RunValue`; the driver prints an `int` result as a number and a `bool` result
+  as `true`/`false`.
+
+**Rationale.** Landing the second type, its instructions, and the runtime value
+enum in a straight-line slice de-risks control flow (slice 2b), which needs a
+`bool` condition value and multi-typed runtime values regardless. Enforcing types
+in the verifier keeps invalid AIR from reaching the interpreter without
+prematurely building the M8 type system.
+
+**Consequences.** Comparison operators parse left-associatively, so a chained
+`a < b < c` is accepted syntactically and rejected only later by the verifier's
+type check rather than by a friendly non-associativity error (TD-0029); a nicer
+diagnostic awaits the type system. Unknown type *names* still fall back to `int`
+(TD-0021). Short-circuiting `&&`/`||` are intentionally deferred to slice 2b
+because their semantics require control flow. This introduces the runtime value
+enum called for by TD-0024, which is now resolved. These interpreter/type
+decisions are provisional and will be revisited when the type system (M8) and its
+overflow policy (ADR-0015/TD-0025) are formalized.

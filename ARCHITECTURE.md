@@ -129,12 +129,14 @@ AIR is the reusable heart of the platform. Its design was ratified in M4
 (ADR-0013, superseding the ADR-0006 direction) and a **minimal implementation
 exists**. The design is:
 
-- **Typed** — every value has an AIR type; the IR is checkable. (Today the only
-  type is `int`.)
+- **Typed** — every value has an AIR type; the IR is checkable. (Today the types
+  are `int` and `bool`; comparisons produce `bool`.)
 - **SSA-based** with a control-flow graph of basic blocks. Every value is the
   result of an instruction (constants included), so operands are uniformly other
-  values. (Today functions have a single block; multiple blocks, and thus phi
-  nodes or block parameters, arrive with control flow.)
+  values. (Today functions have a single block. Multiple blocks and SSA merges
+  arrive with control flow; the merge representation is decided — **block
+  parameters**, not phi nodes, ADR-0017 — and lands in M6 slice 2b, at which point
+  a value becomes "an instruction result *or* a block parameter".)
 - **id/arena representation** — a `Function` owns flat arenas of instructions
   (addressed by `Value`) and blocks (addressed by `Block`), the deliberate
   counterpart to the AST's `Box` tree (ADR-0011). This gives stable ids, side
@@ -142,8 +144,9 @@ exists**. The design is:
 - **Textual form** — a human-readable printer (used by `--dump-air` and golden
   tests). A textual *parser* (full round-tripping) is future work.
 - **Verifiable** — a verifier checks structural invariants (every block
-  terminated, def-before-use, type agreement, return type match). Dominance-based
-  checking arrives with control flow.
+  terminated, def-before-use, per-instruction operand/result type agreement across
+  `int`/`bool`, return type match). Dominance-based checking arrives with control
+  flow.
 - **Target-independent** and **frontend-independent** — `aether-air` depends only
   on `aether-source`; AST → AIR lowering lives in the separate `aether-lower`
   crate.

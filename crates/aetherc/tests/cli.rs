@@ -93,6 +93,27 @@ fn runs_a_program_with_local_variables() {
 }
 
 #[test]
+fn runs_a_boolean_program_and_prints_true_or_false() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_bool_{}.ae", std::process::id()));
+    std::fs::write(
+        &path,
+        b"fn main() -> bool { let ok = 3 < 5; return ok == true; }\n",
+    )
+    .expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "true", "stdout was:\n{stdout}");
+}
+
+#[test]
 fn unknown_variable_is_a_compile_error() {
     let mut path: PathBuf = std::env::temp_dir();
     path.push(format!("aetherc_it_unknown_{}.ae", std::process::id()));

@@ -2,12 +2,14 @@
 
 use aether_source::Span;
 
-/// An AIR type. Only a 64-bit integer exists today; more types arrive with the
-/// type system.
+/// An AIR type. Two primitive types exist today; more arrive with the type
+/// system.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Type {
     /// The 64-bit signed integer type, `int`.
     Int,
+    /// The boolean type, `bool`.
+    Bool,
 }
 
 impl Type {
@@ -16,6 +18,7 @@ impl Type {
     pub fn name(self) -> &'static str {
         match self {
             Type::Int => "int",
+            Type::Bool => "bool",
         }
     }
 }
@@ -49,8 +52,10 @@ impl BinaryOp {
 /// A unary operator.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnaryOp {
-    /// Integer negation.
+    /// Integer negation (`int` → `int`).
     Neg,
+    /// Logical negation (`bool` → `bool`).
+    Not,
 }
 
 impl UnaryOp {
@@ -59,7 +64,49 @@ impl UnaryOp {
     pub fn mnemonic(self) -> &'static str {
         match self {
             UnaryOp::Neg => "neg",
+            UnaryOp::Not => "not",
         }
+    }
+}
+
+/// An integer comparison operator. Each compares two operands and produces a
+/// [`Type::Bool`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CmpOp {
+    /// Equal, `==`.
+    Eq,
+    /// Not equal, `!=`.
+    Ne,
+    /// Less than, `<`.
+    Lt,
+    /// Less than or equal, `<=`.
+    Le,
+    /// Greater than, `>`.
+    Gt,
+    /// Greater than or equal, `>=`.
+    Ge,
+}
+
+impl CmpOp {
+    /// The mnemonic used in AIR's textual form (e.g. `"lt"`, as in `icmp lt`).
+    #[must_use]
+    pub fn mnemonic(self) -> &'static str {
+        match self {
+            CmpOp::Eq => "eq",
+            CmpOp::Ne => "ne",
+            CmpOp::Lt => "lt",
+            CmpOp::Le => "le",
+            CmpOp::Gt => "gt",
+            CmpOp::Ge => "ge",
+        }
+    }
+
+    /// Whether this comparison is an equality test (`==`/`!=`), which accepts
+    /// operands of any single type, as opposed to a relational test (`<`, `<=`,
+    /// `>`, `>=`), which requires integer operands.
+    #[must_use]
+    pub fn is_equality(self) -> bool {
+        matches!(self, CmpOp::Eq | CmpOp::Ne)
     }
 }
 
@@ -102,6 +149,8 @@ impl Block {
 pub enum InstData {
     /// An integer constant.
     IConst(i64),
+    /// A boolean constant.
+    BConst(bool),
     /// A unary operation on one value.
     Unary {
         /// The operator.
@@ -109,10 +158,19 @@ pub enum InstData {
         /// The operand.
         operand: Value,
     },
-    /// A binary operation on two values.
+    /// A binary arithmetic operation on two values (producing an integer).
     Binary {
         /// The operator.
         op: BinaryOp,
+        /// The left operand.
+        lhs: Value,
+        /// The right operand.
+        rhs: Value,
+    },
+    /// An integer comparison of two values (producing a boolean).
+    ICmp {
+        /// The comparison operator.
+        op: CmpOp,
         /// The left operand.
         lhs: Value,
         /// The right operand.

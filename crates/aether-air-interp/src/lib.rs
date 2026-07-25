@@ -20,9 +20,12 @@
 //! let tokens = aether_lexer::tokenize(sources.file(file)).tokens;
 //! let program = aether_parser::parse(sources.file(file), &tokens).program;
 //! let module = aether_lower::lower(&program).module;
-//! assert_eq!(aether_air_interp::interpret(&module), Ok(42));
+//! assert_eq!(
+//!     aether_air_interp::interpret(&module),
+//!     Ok(aether_air_interp::RunValue::Int(42))
+//! );
 //! ```
 
 mod interp;
 
-pub use interp::{RunError, interpret, run_function};
+pub use interp::{RunError, RunValue, interpret, run_function};

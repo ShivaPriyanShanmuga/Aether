@@ -174,16 +174,17 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add the `:` token and parameter parsing (with an AST `Param` type)
   during language expansion (M6).
 
-### TD-0019 — AIR is single-block; no phi / block parameters
+### TD-0019 — AIR is single-block; block-parameter merges not yet implemented
 - **Severity:** medium
 - **Context.** AIR functions currently have one basic block (straight-line code).
-  The CFG shape exists, but multiple blocks, branch terminators, and SSA merges
-  (phi nodes or block parameters) are not implemented, and the phi-vs-block-params
-  choice is deliberately deferred (ADR-0013).
+  Multiple blocks, branch terminators (`br`/`condbr`), and SSA merges are not yet
+  implemented. The representation question is now **decided**: merges use **block
+  parameters**, not phi nodes (ADR-0017). What remains is the implementation.
 - **Impact.** No control flow can be represented yet.
-- **Trigger.** Introduce with control-flow language features (M6). Decide
-  phi-vs-block-parameters then, and extend the verifier to dominance-based
-  def-before-use across blocks.
+- **Trigger.** Implement in M6 slice 2b: the `Value`-model refactor to a unified
+  value table (instruction result *or* block parameter), `br`/`condbr`
+  terminators carrying edge arguments, and a dominance-based def-before-use
+  verifier that treats block parameters uniformly.
 
 ### TD-0020 — Missing `return` surfaces as an AIR verification error
 - **Severity:** medium
@@ -198,9 +199,10 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 
 ### TD-0021 — Literal value vs type range is unchecked in lowering
 - **Severity:** low
-- **Context.** `lower` casts the parser's `u64` literal to `i64` (`as i64`) and
-  `lower_type` maps any type name to `int`. Neither range (does the literal fit the
-  target type?) nor type-name validity (is `foo` a real type?) is checked.
+- **Context.** `lower` casts the parser's `u64` literal to `i64` (`as i64`), and
+  `lower_type` recognizes `int` and `bool` but maps any *other* type name to
+  `int`. Neither range (does the literal fit the target type?) nor type-name
+  validity (is `foo` a real type?) is checked.
 - **Impact.** An out-of-range literal wraps silently; an unknown return type is
   silently treated as `int`.
 - **Trigger.** The type system (M8) validates type names and literal ranges.
@@ -223,13 +225,14 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Extend to CFG execution (a work-list / successor-following loop,
   and phi/block-parameter handling) alongside control-flow language features (M6).
 
-### TD-0024 — Runtime values are `i64` only
+### TD-0024 — Runtime values are `i64` only — ✅ resolved (M6 slice 2a)
 - **Severity:** low
-- **Context.** The interpreter represents every runtime value as `i64`; there is
-  no runtime value enum because `int` is the only type.
-- **Impact.** Cannot represent other types (booleans, etc.).
-- **Trigger.** Introduce a runtime `Value` enum when the type system adds more
-  types (M8).
+- **Context.** The interpreter originally represented every runtime value as
+  `i64` because `int` was the only type.
+- **Resolution.** M6 slice 2a introduced the `bool` type and a public
+  `RunValue { Int(i64), Bool(bool) }` enum (ADR-0018); `interpret`/`run_function`
+  now return `RunValue`. Adding further types (M8) extends this enum. See the
+  Resolved items section.
 
 ### TD-0025 — Overflow policy is provisional (wrapping)
 - **Severity:** low
@@ -260,11 +263,25 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 
 ### TD-0028 — `let` has no type annotation
 - **Severity:** low
-- **Context.** `let x = <expr>;` infers `int` (the only type). Type-annotated
-  bindings (`let x: T = …`) need the `:` token (also TD-0018) and a real type
-  system.
+- **Context.** `let x = <expr>;` infers the initializer's type (now `int` or
+  `bool`). Type-annotated bindings (`let x: T = …`) need the `:` token (also
+  TD-0018) and a real type system.
 - **Impact.** Bindings cannot be explicitly typed.
 - **Trigger.** Add the `:` token and annotation parsing with the type system (M8).
+
+### TD-0029 — Comparisons are left-associative; no short-circuit `&&`/`||`
+- **Severity:** low
+- **Context.** Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) parse as
+  left-associative infix operators (M6 slice 2a). A chained `a < b < c` therefore
+  parses as `(a < b) < c` and is rejected only later, by the AIR verifier's type
+  check (a `bool` where an `int` is required), rather than by a friendly
+  non-associativity error at parse time. The short-circuiting logical operators
+  `&&`/`||` are not implemented yet: their semantics require control flow.
+- **Impact.** Chained comparisons produce an IR-level type error instead of a
+  clear syntax error; boolean expressions cannot yet combine conditions.
+- **Trigger.** Add `&&`/`||` with control flow (M6 slice 2b), lowering them to
+  branches. Make comparisons non-associative (a targeted diagnostic) when the
+  type system lands (M8), or sooner if it proves worthwhile.
 
 ---
 
@@ -273,3 +290,6 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **TD-0002 — `aetherc` compilation pipeline is a stub.** Resolved in M5: the
   driver runs the full pipeline (lex → parse → lower → verify → interpret) and
   executes programs, printing `main`'s result. Complete for the minimal language.
+- **TD-0024 — Runtime values are `i64` only.** Resolved in M6 slice 2a: the
+  interpreter now uses a `RunValue { Int(i64), Bool(bool) }` enum (ADR-0018),
+  which later types (M8) will extend.

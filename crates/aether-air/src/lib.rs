@@ -29,7 +29,8 @@ mod print;
 mod verify;
 
 pub use ir::{
-    BinaryOp, Block, BlockData, Function, Inst, InstData, Module, Terminator, Type, UnaryOp, Value,
+    BinaryOp, Block, BlockData, CmpOp, Function, Inst, InstData, Module, Terminator, Type, UnaryOp,
+    Value,
 };
 pub use print::print;
 pub use verify::{VerifyError, verify};

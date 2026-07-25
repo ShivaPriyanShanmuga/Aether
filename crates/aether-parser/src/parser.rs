@@ -26,16 +26,25 @@ pub fn parse(file: &SourceFile, tokens: &[Token]) -> ParseResult {
     Parser::new(file, tokens).parse_program()
 }
 
-/// Right binding power of the unary prefix operator. Higher than any binary
-/// operator, so `-a * b` parses as `(-a) * b`.
-const UNARY_BINDING_POWER: u8 = 7;
+/// Right binding power of the unary prefix operators (`-`, `!`). Higher than any
+/// binary operator, so `-a * b` parses as `(-a) * b` and `!a == b` as `(!a) == b`.
+const UNARY_BINDING_POWER: u8 = 11;
 
 /// The `(left, right)` binding powers of an infix operator. `right > left` makes
 /// the operator left-associative.
+///
+/// Precedence, loosest to tightest: equality, then relational, then additive,
+/// then multiplicative (unary prefix binds tighter than all of them). Comparison
+/// operators are left-associative for now; chained comparisons like `a < b < c`
+/// parse but are rejected later by AIR type checking (a nicer non-associativity
+/// error awaits the type system). Short-circuiting `&&`/`||` will slot in below
+/// equality when control flow lands (slice 2b).
 fn infix_binding_power(op: BinOp) -> (u8, u8) {
     match op {
-        BinOp::Add | BinOp::Sub => (1, 2),
-        BinOp::Mul | BinOp::Div => (3, 4),
+        BinOp::Eq | BinOp::Ne => (1, 2),
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => (3, 4),
+        BinOp::Add | BinOp::Sub => (5, 6),
+        BinOp::Mul | BinOp::Div => (7, 8),
     }
 }
 
@@ -260,6 +269,12 @@ impl<'a> Parser<'a> {
                 TokenKind::Minus => BinOp::Sub,
                 TokenKind::Star => BinOp::Mul,
                 TokenKind::Slash => BinOp::Div,
+                TokenKind::EqEq => BinOp::Eq,
+                TokenKind::BangEq => BinOp::Ne,
+                TokenKind::Lt => BinOp::Lt,
+                TokenKind::LtEq => BinOp::Le,
+                TokenKind::Gt => BinOp::Gt,
+                TokenKind::GtEq => BinOp::Ge,
                 _ => break,
             };
             let (l_bp, r_bp) = infix_binding_power(op);
@@ -290,16 +305,15 @@ impl<'a> Parser<'a> {
                     span: token.span,
                 }
             }
-            TokenKind::Minus => {
+            TokenKind::True | TokenKind::False => {
                 self.bump();
-                let operand = self.parse_expr(UNARY_BINDING_POWER);
-                let span = token.span.to(operand.span());
-                Expr::Unary {
-                    op: UnOp::Neg,
-                    operand: Box::new(operand),
-                    span,
+                Expr::BoolLit {
+                    value: token.kind == TokenKind::True,
+                    span: token.span,
                 }
             }
+            TokenKind::Minus => self.parse_prefix_unary(token, UnOp::Neg),
+            TokenKind::Bang => self.parse_prefix_unary(token, UnOp::Not),
             TokenKind::LParen => {
                 self.bump();
                 let inner = self.parse_expr(0);
@@ -321,6 +335,18 @@ impl<'a> Parser<'a> {
                 );
                 Expr::Error { span: token.span }
             }
+        }
+    }
+
+    /// Parse a prefix unary operator (`-` or `!`) whose token is `op_token`.
+    fn parse_prefix_unary(&mut self, op_token: Token, op: UnOp) -> Expr {
+        self.bump(); // the operator
+        let operand = self.parse_expr(UNARY_BINDING_POWER);
+        let span = op_token.span.to(operand.span());
+        Expr::Unary {
+            op,
+            operand: Box::new(operand),
+            span,
         }
     }
 
@@ -533,5 +559,83 @@ Program
     fn let_missing_equals_reports() {
         let (_tree, diags) = parse_str("fn f() -> int { let x 5; return x; }");
         assert!(diags.iter().any(|d| d.message.contains("expected `=`")));
+    }
+
+    #[test]
+    fn parses_boolean_literals() {
+        let tree = parse_ok("fn f() -> bool { return true; }");
+        assert!(tree.contains("BoolLit true"));
+        let tree = parse_ok("fn f() -> bool { return false; }");
+        assert!(tree.contains("BoolLit false"));
+    }
+
+    #[test]
+    fn comparison_binds_looser_than_arithmetic() {
+        // 1 + 2 < 3 * 4  =>  (1 + 2) < (3 * 4)
+        let tree = parse_ok("fn f() -> bool { return 1 + 2 < 3 * 4; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"f\" -> \"bool\"
+    Block
+      Return
+        Binary <
+          Binary +
+            IntLit 1
+            IntLit 2
+          Binary *
+            IntLit 3
+            IntLit 4"
+        );
+    }
+
+    #[test]
+    fn equality_binds_looser_than_relational() {
+        // a == b < c  =>  a == (b < c)
+        let tree = parse_ok("fn f() -> bool { return a == b < c; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"f\" -> \"bool\"
+    Block
+      Return
+        Binary ==
+          Name \"a\"
+          Binary <
+            Name \"b\"
+            Name \"c\""
+        );
+    }
+
+    #[test]
+    fn logical_not_binds_tighter_than_comparison() {
+        // !a == b  =>  (!a) == b
+        let tree = parse_ok("fn f() -> bool { return !a == b; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"f\" -> \"bool\"
+    Block
+      Return
+        Binary ==
+          Unary !
+            Name \"a\"
+          Name \"b\""
+        );
+    }
+
+    #[test]
+    fn all_comparison_operators_parse() {
+        for sym in ["==", "!=", "<", "<=", ">", ">="] {
+            let src = format!("fn f() -> bool {{ return 1 {sym} 2; }}");
+            let tree = parse_ok(&src);
+            assert!(
+                tree.contains(&format!("Binary {sym}")),
+                "missing `Binary {sym}` in:\n{tree}"
+            );
+        }
     }
 }

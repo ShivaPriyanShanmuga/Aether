@@ -92,6 +92,7 @@ impl Printer {
     fn expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntLit { value, .. } => self.line(format!("IntLit {value}")),
+            Expr::BoolLit { value, .. } => self.line(format!("BoolLit {value}")),
             Expr::Unary { op, operand, .. } => {
                 self.line(format!("Unary {}", op.symbol()));
                 self.depth += 1;

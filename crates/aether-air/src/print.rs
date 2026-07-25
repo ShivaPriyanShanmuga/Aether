@@ -66,9 +66,18 @@ fn value_ref(value: Value) -> String {
 fn inst_text(function: &Function, value: Value) -> String {
     match function.inst(value).data {
         InstData::IConst(n) => format!("iconst {n}"),
+        InstData::BConst(b) => format!("bconst {b}"),
         InstData::Unary { op, operand } => format!("{} {}", op.mnemonic(), value_ref(operand)),
         InstData::Binary { op, lhs, rhs } => {
             format!("{} {}, {}", op.mnemonic(), value_ref(lhs), value_ref(rhs))
+        }
+        InstData::ICmp { op, lhs, rhs } => {
+            format!(
+                "icmp {} {}, {}",
+                op.mnemonic(),
+                value_ref(lhs),
+                value_ref(rhs)
+            )
         }
     }
 }
@@ -82,8 +91,59 @@ fn terminator_text(terminator: &Terminator) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{BinaryOp, Function, InstData, Terminator, Type};
+    use crate::ir::{BinaryOp, CmpOp, Function, InstData, Terminator, Type, UnaryOp};
     use aether_source::{BytePos, SourceMap};
+
+    fn dummy_span() -> aether_source::Span {
+        let mut map = SourceMap::new();
+        let file = map.add_file("t.ae", "");
+        aether_source::Span::new(file, BytePos(0), BytePos(0))
+    }
+
+    #[test]
+    fn prints_boolean_and_comparison_instructions() {
+        let span = dummy_span();
+        let mut f = Function::new("f", Type::Bool);
+        let entry = f.entry();
+        let a = f.push_inst(entry, InstData::IConst(1), Type::Int, span);
+        let b = f.push_inst(entry, InstData::IConst(2), Type::Int, span);
+        let lt = f.push_inst(
+            entry,
+            InstData::ICmp {
+                op: CmpOp::Lt,
+                lhs: a,
+                rhs: b,
+            },
+            Type::Bool,
+            span,
+        );
+        let neg = f.push_inst(
+            entry,
+            InstData::Unary {
+                op: UnaryOp::Not,
+                operand: lt,
+            },
+            Type::Bool,
+            span,
+        );
+        f.set_terminator(entry, Terminator::Ret(neg));
+
+        let mut module = Module::new();
+        module.add_function(f);
+
+        assert_eq!(
+            print(&module),
+            "\
+fn f() -> bool {
+block0:
+    %0 = iconst 1
+    %1 = iconst 2
+    %2 = icmp lt %0, %1
+    %3 = not %2
+    ret %3
+}"
+        );
+    }
 
     #[test]
     fn prints_a_small_function() {

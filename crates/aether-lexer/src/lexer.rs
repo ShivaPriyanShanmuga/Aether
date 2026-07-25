@@ -119,17 +119,15 @@ impl<'src> Lexer<'src> {
             ',' => TokenKind::Comma,
             '+' => TokenKind::Plus,
             '*' => TokenKind::Star,
-            '=' => TokenKind::Eq,
             // `/` line comments are handled by `skip_trivia`, so a `/` here is division.
             '/' => TokenKind::Slash,
-            '-' => {
-                if self.peek() == Some('>') {
-                    self.bump();
-                    TokenKind::Arrow
-                } else {
-                    TokenKind::Minus
-                }
-            }
+            // Two-character operators share a first character with a one-character
+            // one, so each peeks ahead for the trailing `=`/`>` (like `->`).
+            '=' => self.one_or_two('=', TokenKind::EqEq, TokenKind::Eq),
+            '!' => self.one_or_two('=', TokenKind::BangEq, TokenKind::Bang),
+            '<' => self.one_or_two('=', TokenKind::LtEq, TokenKind::Lt),
+            '>' => self.one_or_two('=', TokenKind::GtEq, TokenKind::Gt),
+            '-' => self.one_or_two('>', TokenKind::Arrow, TokenKind::Minus),
             _ => {
                 let span = self.span(start, self.pos);
                 self.diagnostics.push(
@@ -140,6 +138,18 @@ impl<'src> Lexer<'src> {
             }
         };
         self.push(kind, start, self.pos);
+    }
+
+    /// Resolve a one- or two-character operator: if the next character is
+    /// `second`, consume it and return `two`; otherwise return `one`. The first
+    /// character has already been consumed by the caller.
+    fn one_or_two(&mut self, second: char, two: TokenKind, one: TokenKind) -> TokenKind {
+        if self.peek() == Some(second) {
+            self.bump();
+            two
+        } else {
+            one
+        }
     }
 
     /// The character at the current position, without consuming it.
@@ -347,6 +357,44 @@ mod tests {
             kinds("1 / 2"),
             vec![TokenKind::Int, TokenKind::Slash, TokenKind::Int]
         );
+    }
+
+    #[test]
+    fn comparison_and_logical_operators() {
+        assert_eq!(
+            kinds("== != < <= > >= !"),
+            vec![
+                TokenKind::EqEq,
+                TokenKind::BangEq,
+                TokenKind::Lt,
+                TokenKind::LtEq,
+                TokenKind::Gt,
+                TokenKind::GtEq,
+                TokenKind::Bang,
+            ]
+        );
+    }
+
+    #[test]
+    fn one_versus_two_character_operators() {
+        // A single `=` is assignment; `==` is equality (two-char lookahead).
+        assert_eq!(kinds("="), vec![TokenKind::Eq]);
+        assert_eq!(kinds("=="), vec![TokenKind::EqEq]);
+        // `!` alone versus `!=`.
+        assert_eq!(kinds("!"), vec![TokenKind::Bang]);
+        assert_eq!(kinds("!="), vec![TokenKind::BangEq]);
+        // `<`/`>` alone versus their `=`-suffixed forms.
+        assert_eq!(kinds("< <="), vec![TokenKind::Lt, TokenKind::LtEq]);
+        assert_eq!(kinds("> >="), vec![TokenKind::Gt, TokenKind::GtEq]);
+        // No greedy merge across whitespace: `= =` is two `=` tokens.
+        assert_eq!(kinds("= ="), vec![TokenKind::Eq, TokenKind::Eq]);
+    }
+
+    #[test]
+    fn boolean_keywords() {
+        assert_eq!(kinds("true false"), vec![TokenKind::True, TokenKind::False]);
+        // `truer` is an identifier, not the `true` keyword followed by `r`.
+        assert_eq!(kinds("truer"), vec![TokenKind::Ident]);
     }
 
     #[test]

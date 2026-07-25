@@ -21,6 +21,10 @@ pub enum TokenKind {
     Return,
     /// The `let` keyword.
     Let,
+    /// The `true` boolean literal keyword.
+    True,
+    /// The `false` boolean literal keyword.
+    False,
 
     /// A left parenthesis `(`.
     LParen,
@@ -49,6 +53,21 @@ pub enum TokenKind {
     /// An equals sign `=`.
     Eq,
 
+    /// A double-equals `==` (equality).
+    EqEq,
+    /// A `!=` (inequality).
+    BangEq,
+    /// A less-than `<`.
+    Lt,
+    /// A less-than-or-equal `<=`.
+    LtEq,
+    /// A greater-than `>`.
+    Gt,
+    /// A greater-than-or-equal `>=`.
+    GtEq,
+    /// A logical-not `!`.
+    Bang,
+
     /// The end of the input. Always the final token; has an empty span.
     Eof,
 }
@@ -65,6 +84,8 @@ impl TokenKind {
             Fn => "keyword `fn`",
             Return => "keyword `return`",
             Let => "keyword `let`",
+            True => "keyword `true`",
+            False => "keyword `false`",
             LParen => "`(`",
             RParen => "`)`",
             LBrace => "`{`",
@@ -77,6 +98,13 @@ impl TokenKind {
             Slash => "`/`",
             Arrow => "`->`",
             Eq => "`=`",
+            EqEq => "`==`",
+            BangEq => "`!=`",
+            Lt => "`<`",
+            LtEq => "`<=`",
+            Gt => "`>`",
+            GtEq => "`>=`",
+            Bang => "`!`",
             Eof => "end of file",
         }
     }
@@ -84,7 +112,10 @@ impl TokenKind {
     /// Whether this kind is a reserved keyword.
     #[must_use]
     pub fn is_keyword(self) -> bool {
-        matches!(self, TokenKind::Fn | TokenKind::Return | TokenKind::Let)
+        matches!(
+            self,
+            TokenKind::Fn | TokenKind::Return | TokenKind::Let | TokenKind::True | TokenKind::False
+        )
     }
 }
 
@@ -95,6 +126,8 @@ pub(crate) fn keyword(lexeme: &str) -> Option<TokenKind> {
         "fn" => Some(TokenKind::Fn),
         "return" => Some(TokenKind::Return),
         "let" => Some(TokenKind::Let),
+        "true" => Some(TokenKind::True),
+        "false" => Some(TokenKind::False),
         _ => None,
     }
 }
@@ -125,6 +158,8 @@ mod tests {
         assert_eq!(keyword("fn"), Some(TokenKind::Fn));
         assert_eq!(keyword("return"), Some(TokenKind::Return));
         assert_eq!(keyword("let"), Some(TokenKind::Let));
+        assert_eq!(keyword("true"), Some(TokenKind::True));
+        assert_eq!(keyword("false"), Some(TokenKind::False));
     }
 
     #[test]
@@ -139,6 +174,8 @@ mod tests {
     fn keyword_predicate_matches_lookup() {
         assert!(TokenKind::Fn.is_keyword());
         assert!(TokenKind::Return.is_keyword());
+        assert!(TokenKind::True.is_keyword());
+        assert!(TokenKind::False.is_keyword());
         assert!(!TokenKind::Ident.is_keyword());
         assert!(!TokenKind::Plus.is_keyword());
     }
