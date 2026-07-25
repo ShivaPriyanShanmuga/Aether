@@ -146,6 +146,34 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** If lexing shows up in profiling, cache a `Chars`/`CharIndices`
   iterator or a small lookahead buffer.
 
+### TD-0016 — Parser error recovery is basic
+- **Severity:** low
+- **Context.** `parse_fn` aborts on the first missing token (via `?`) and recovery
+  synchronizes only to the next `fn`. Statement-level recovery is a
+  progress-guard-plus-error, not targeted resynchronization.
+- **Impact.** A single malformed function can discard the rest of that function
+  and occasionally produce a slightly redundant diagnostic (e.g. an unclosed
+  paren yielding both "expected expression" and "expected `)`").
+- **Trigger.** Improve recovery (statement/expression-level synchronization,
+  recovery sets) as the grammar grows and diagnostic quality matters more.
+
+### TD-0017 — No parser recursion-depth guard
+- **Severity:** low
+- **Context.** Expression parsing recurses; the AST is a `Box` tree (ADR-0011).
+  Pathologically nested input (e.g. thousands of `(((…)))`) could overflow the
+  stack during parsing or drop.
+- **Impact.** A crafted input could crash the compiler with a stack overflow.
+- **Trigger.** Add a configurable nesting-depth limit that emits a diagnostic
+  before the stack is exhausted; relevant once untrusted input is a concern.
+
+### TD-0018 — No function parameters
+- **Severity:** low
+- **Context.** The grammar accepts only an empty parameter list `()`; parameter
+  syntax (`name: type`) needs a `:` token the lexer does not yet have.
+- **Impact.** Functions cannot take arguments.
+- **Trigger.** Add the `:` token and parameter parsing (with an AST `Param` type)
+  during language expansion (M6).
+
 ---
 
 ## Resolved items

@@ -128,3 +128,47 @@ fn lexical_error_is_a_compile_error() {
         "stderr was:\n{stderr}"
     );
 }
+
+#[test]
+fn dump_ast_prints_tree_and_succeeds() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_ast_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() -> int { return 1 + 2; }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg("--dump-ast")
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Fn \"main\" -> \"int\""),
+        "stdout was:\n{stdout}"
+    );
+    assert!(stdout.contains("Binary +"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn syntax_error_is_a_compile_error() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_synerr_{}.ae", std::process::id()));
+    // Missing semicolon after the return expression.
+    std::fs::write(&path, b"fn main() -> int { return 1 }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected COMPILE_ERROR exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("expected `;`"), "stderr was:\n{stderr}");
+}

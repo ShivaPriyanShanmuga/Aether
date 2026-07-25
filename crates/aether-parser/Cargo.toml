@@ -1,22 +1,17 @@
 [package]
-name = "aetherc"
+name = "aether-parser"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Command-line driver for the Aether compiler platform."
-
-# The default binary target (`src/main.rs`) is named after the package. CLI
-# argument parsing remains hand-rolled for now; see TECH_DEBT.md for the planned
-# migration to `clap` once the CLI surface grows.
+description = "Recursive-descent parser (with Pratt expression parsing) for the Aether language."
 
 [dependencies]
 aether-source = { path = "../aether-source" }
 aether-diagnostics = { path = "../aether-diagnostics" }
 aether-lexer = { path = "../aether-lexer" }
 aether-ast = { path = "../aether-ast" }
-aether-parser = { path = "../aether-parser" }
 
 [lints]
 workspace = true

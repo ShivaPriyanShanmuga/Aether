@@ -35,12 +35,13 @@ interpreter. This validates the whole architecture against a real program early.
   `aether-lexer`: tokenizes the minimal language into a spanned token stream
   (payload-free `Copy` tokens) with lexical error recovery through diagnostics;
   `aetherc` gained a `--dump-tokens` flag.
-- **M3 — AST & parser** ⬜ ← next
-  `aether-ast` (spanned node definitions) and `aether-parser` (recursive descent
-  with precedence-based expression parsing) for the minimal grammar.
-- **M4 — AIR core & lowering** ⬜
+- **M3 — AST & parser** ✅
+  `aether-ast` (`Box`-owned spanned tree + pretty-printer) and `aether-parser`
+  (recursive descent with Pratt expression parsing, error recovery) for the
+  minimal grammar; `aetherc` gained a `--dump-ast` flag.
+- **M4 — AIR core & lowering** ⬜ ← next
   `aether-air`: minimal typed SSA IR, builder, textual printer, and verifier;
-  lower the AST into AIR.
+  lower the AST into AIR. Ratifies the AIR design (supersedes ADR-0006).
 - **M5 — AIR interpreter** ⬜
   `aether-air-interp`: execute AIR and produce the program's result. **First
   runnable end-to-end pipeline** wired through `aetherc`.
@@ -115,4 +116,4 @@ add today's code.
 
 ## Next milestone
 
-**M3 — AST & parser.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M4 — AIR core & lowering.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

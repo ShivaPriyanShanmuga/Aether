@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use aether_diagnostics::{Diagnostic, DiagnosticHandler, render};
 use aether_lexer::{LexResult, Token, tokenize};
+use aether_parser::ParseResult;
 use aether_source::SourceMap;
 
 /// Program name used in help and diagnostic output.
@@ -45,8 +46,10 @@ enum Command {
     Compile {
         /// Path to the source file to compile.
         input: PathBuf,
-        /// Whether `--dump-tokens` was given: print the token stream and stop.
+        /// Whether `--dump-tokens` was given: print the token stream.
         dump_tokens: bool,
+        /// Whether `--dump-ast` was given: print the parsed AST.
+        dump_ast: bool,
     },
 }
 
@@ -78,12 +81,14 @@ impl std::fmt::Display for ParseError {
 fn parse(args: &[String]) -> Result<Command, ParseError> {
     let mut input: Option<PathBuf> = None;
     let mut dump_tokens = false;
+    let mut dump_ast = false;
 
     for arg in args {
         match arg.as_str() {
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             "--dump-tokens" => dump_tokens = true,
+            "--dump-ast" => dump_ast = true,
             // Anything else starting with '-' (other than a bare "-") is an
             // option we do not recognize.
             other if other.starts_with('-') && other != "-" => {
@@ -99,7 +104,11 @@ fn parse(args: &[String]) -> Result<Command, ParseError> {
     }
 
     match input {
-        Some(input) => Ok(Command::Compile { input, dump_tokens }),
+        Some(input) => Ok(Command::Compile {
+            input,
+            dump_tokens,
+            dump_ast,
+        }),
         None => Err(ParseError::MissingInput),
     }
 }
@@ -124,18 +133,22 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             println!("{}", help_string());
             ExitCode::from(exit::SUCCESS)
         }
-        Command::Compile { input, dump_tokens } => compile(&input, dump_tokens),
+        Command::Compile {
+            input,
+            dump_tokens,
+            dump_ast,
+        } => compile(&input, dump_tokens, dump_ast),
     }
 }
 
 /// Handle the `compile` command.
 ///
-/// Runs the phases that exist today (currently just lexing) over the input,
-/// reporting any diagnostics through the real renderer. With `--dump-tokens`, the
-/// token stream is printed to stdout instead of continuing. The later phases
-/// (parser onward) do not exist yet, so a clean lex of a real program reports the
-/// pipeline as unimplemented rather than pretending to compile.
-fn compile(input: &Path, dump_tokens: bool) -> ExitCode {
+/// Runs the phases that exist today (lexing, then parsing) over the input,
+/// reporting diagnostics through the real renderer. `--dump-tokens` prints the
+/// token stream; `--dump-ast` prints the parsed AST. AIR lowering onward does not
+/// exist yet, so a clean parse of a real program reports the pipeline as
+/// unimplemented rather than pretending to compile.
+fn compile(input: &Path, dump_tokens: bool, dump_ast: bool) -> ExitCode {
     let source = match std::fs::read_to_string(input) {
         Ok(source) => source,
         Err(err) => {
@@ -146,37 +159,47 @@ fn compile(input: &Path, dump_tokens: bool) -> ExitCode {
 
     let mut sources = SourceMap::new();
     let file = sources.add_file(input.display().to_string(), source);
+    let mut handler = DiagnosticHandler::new();
 
     // Lexical analysis (exercises `aether-lexer`).
     let LexResult {
         tokens,
         diagnostics,
     } = tokenize(sources.file(file));
-
-    let mut handler = DiagnosticHandler::new();
     for diagnostic in diagnostics {
         handler.emit(diagnostic);
     }
-
     if dump_tokens {
         dump_tokens_to_stdout(&tokens, &sources);
     }
 
+    // Syntactic analysis (exercises `aether-parser`). Skipped when `--dump-tokens`
+    // asked to stop after lexing, and when lexing already failed.
+    if !dump_tokens && !handler.has_errors() {
+        let ParseResult {
+            program,
+            diagnostics,
+        } = aether_parser::parse(sources.file(file), &tokens);
+        for diagnostic in diagnostics {
+            handler.emit(diagnostic);
+        }
+        if dump_ast {
+            println!("{}", aether_ast::pretty::print(&program));
+        }
+    }
+
     // Decide the outcome, adding a "not yet implemented" note when a real program
-    // lexed cleanly but there is no later phase to hand it to.
+    // parsed cleanly but there is no later phase to hand it to.
     let code = if handler.has_errors() {
         exit::COMPILE_ERROR
-    } else if dump_tokens {
+    } else if dump_tokens || dump_ast {
         exit::SUCCESS
     } else {
         handler.emit(
             Diagnostic::error(
-                "the Aether compilation pipeline is not yet implemented beyond lexing",
+                "the Aether compilation pipeline is not yet implemented beyond parsing",
             )
-            .with_note(format!(
-                "lexed {} token(s) including end-of-file; the parser lands in M3 (see ROADMAP.md)",
-                tokens.len()
-            )),
+            .with_note("AIR lowering and the interpreter land in M4/M5 (see ROADMAP.md)"),
         );
         exit::UNIMPLEMENTED
     };
@@ -224,6 +247,7 @@ fn help_string() -> String {
          \n\
          Options:\n  \
          --dump-tokens    Lex the input, print the token stream, then exit\n  \
+         --dump-ast       Parse the input, print the AST, then exit\n  \
          -h, --help       Print this help message and exit\n  \
          -V, --version    Print version information and exit",
         version = version_string(),
@@ -258,6 +282,7 @@ mod tests {
             Ok(Command::Compile {
                 input: PathBuf::from("main.ae"),
                 dump_tokens: false,
+                dump_ast: false,
             })
         );
     }
@@ -269,6 +294,19 @@ mod tests {
             Ok(Command::Compile {
                 input: PathBuf::from("main.ae"),
                 dump_tokens: true,
+                dump_ast: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_dump_ast_flag() {
+        assert_eq!(
+            parse(&args(&["--dump-ast", "main.ae"])),
+            Ok(Command::Compile {
+                input: PathBuf::from("main.ae"),
+                dump_tokens: false,
+                dump_ast: true,
             })
         );
     }

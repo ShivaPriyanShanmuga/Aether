@@ -13,6 +13,8 @@ members = [
     "crates/aether-source",
     "crates/aether-diagnostics",
     "crates/aether-lexer",
+    "crates/aether-ast",
+    "crates/aether-parser",
 ]
 
 # Shared package metadata. Member crates inherit these via `field.workspace = true`.

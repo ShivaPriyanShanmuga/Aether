@@ -270,3 +270,62 @@ deferred until name resolution (M7) actually benefits from fast symbol compariso
 from span text (via the `SourceMap`). Integer-literal validation (overflow, bases,
 underscores) therefore happens at or after parsing, not during lexing (TD-0012).
 When interning is introduced, it will likely arrive together with the `Session`.
+
+---
+
+## ADR-0011 — The AST is a `Box`-owned tree
+
+**Status:** Accepted
+
+**Context.** The AST is the parser's output and AIR lowering's input. Its
+representation affects parser ergonomics and how the AST is traversed.
+
+**Alternatives considered.**
+- **Arena allocation** (`&'arena Expr`) — fast, cache-friendly, no per-node drop,
+  but threads an `'arena` lifetime through every AST-touching signature.
+- **Index-based** (`ExprId` into a flat `Vec`) — cache-friendly, no lifetimes,
+  enables side tables, but adds indirection and makes pattern matching clumsier.
+- **`Box`-owned tree** — interior nodes own children via `Box`.
+
+**Decision.** Use a **`Box`-owned tree**.
+
+**Rationale.** The AST is a *transient* frontend product that is lowered to AIR
+and discarded; it is not the long-lived optimization IR. `Box` is idiomatic,
+dependency-free, and keeps recursive construction and pattern matching clean —
+the right trade for the AST's role. The heavier index/arena machinery is reserved
+for **AIR** (ADR-0011's counterpart, to be decided in M4), where SSA, side
+tables, and in-place mutation actually need it.
+
+**Consequences.** AST nodes are self-contained (identifiers store their text,
+integer literals their value), so tooling like the pretty-printer needs no source
+map. Very deeply nested expressions could, in theory, stress the stack on
+construction/drop; not a concern at realistic scale, and a parser recursion-depth
+guard is tracked separately (TD-0017).
+
+---
+
+## ADR-0012 — Expressions use a Pratt (precedence-climbing) parser
+
+**Status:** Accepted
+
+**Context.** The expression grammar has operator precedence and associativity and
+will grow (comparison, logical, assignment, …). The parser is otherwise
+straightforward recursive descent.
+
+**Alternatives considered.**
+- **One function per precedence level** (`parse_add`, `parse_mul`, …) — explicit
+  and readable, but adds a function per level and is verbose as levels multiply.
+- **Pratt / precedence climbing** — a single `parse_expr(min_bp)` driven by a
+  binding-power table.
+
+**Decision.** Use **Pratt parsing** for unary/binary expressions; the rest of the
+grammar (items, statements) stays plain recursive descent.
+
+**Rationale.** With Pratt, precedence and associativity live in one small
+binding-power table, so adding an operator is a data change rather than a new
+function — the design that scales as the operator set grows. It is a contained,
+well-understood technique, not a speculative abstraction.
+
+**Consequences.** Unary prefix binding power sits above all binary operators, so
+`-a * b` parses as `(-a) * b`. New operators are added by extending the
+binding-power table and the prefix/infix dispatch.

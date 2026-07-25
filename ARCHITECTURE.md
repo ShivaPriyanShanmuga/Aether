@@ -72,8 +72,8 @@ below therefore distinguishes what exists today from what is planned.
 | `aether-diagnostics` | Diagnostics: errors/warnings, caret rendering | **exists** |
 | `aether-support` | Shared primitives: arenas, interners, data structures | planned (as needed) |
 | `aether-lexer` | Lexical analysis → token stream | **exists** |
-| `aether-ast` | AST node definitions | planned (M3) |
-| `aether-parser` | Recursive-descent parser → AST | planned (M3) |
+| `aether-ast` | AST node definitions (+ pretty-printer) | **exists** |
+| `aether-parser` | Recursive-descent parser → AST | **exists** |
 | `aether-air` | AIR data structures, builder, verifier, textual printer/parser | planned (M4) |
 | `aether-air-interp` | AIR interpreter (first execution target) | planned (M5) |
 | `aether-sema` | Name resolution and type checking | planned (Phase 2) |
