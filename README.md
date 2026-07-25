@@ -8,11 +8,12 @@ maintainable, extensible, well-tested compiler *platform* — a frontend, a cust
 intermediate representation (**AIR**), an optimization and analysis framework, and
 pluggable backends — designed so it can keep growing for years.
 
-> **Status:** early. Milestone 0 (project foundation) is complete: workspace,
-> tooling, CI, coding standards, and the `aetherc` driver skeleton are in place.
-> The compilation pipeline itself is not yet implemented. See
-> [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for exactly where things stand and
-> [`ROADMAP.md`](ROADMAP.md) for where they are going.
+> **Status:** early, but **it runs**. Phase 1 (First Light) is complete: a program
+> compiles and executes end to end — lexer → parser → AST → AIR (the custom IR) →
+> interpreter. The language today is minimal: one `main` function returning an
+> integer arithmetic expression. See [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for
+> exactly where things stand and [`ROADMAP.md`](ROADMAP.md) for where they go next
+> (local variables, control flow, functions).
 
 ## Quickstart
 
@@ -20,9 +21,15 @@ pluggable backends — designed so it can keep growing for years.
 # Build everything
 cargo build
 
-# Run the driver
+# Write and run a tiny program
+echo 'fn main() -> int { return (10 - 4) * 7 + -2; }' > demo.ae
+cargo run -q -p aetherc -- demo.ae            # prints: 40
+
+# Inspect intermediate stages
+cargo run -q -p aetherc -- --dump-tokens demo.ae
+cargo run -q -p aetherc -- --dump-ast demo.ae
+cargo run -q -p aetherc -- --dump-air demo.ae
 cargo run -p aetherc -- --help
-cargo run -p aetherc -- --version
 
 # Run the full test suite (unit + integration)
 cargo test
@@ -40,12 +47,20 @@ automatically on first `cargo` invocation.
 ```
 Aether/
 ├── crates/
-│   └── aetherc/          # command-line driver (entry point)
-├── .github/workflows/    # CI
-└── *.md                  # project-management documents (see below)
+│   ├── aetherc/            # command-line driver (entry point)
+│   ├── aether-source/      # source files, spans, line/column
+│   ├── aether-diagnostics/ # structured diagnostics + caret rendering
+│   ├── aether-lexer/       # tokenizer
+│   ├── aether-ast/         # AST + pretty-printer
+│   ├── aether-parser/      # recursive-descent + Pratt parser
+│   ├── aether-air/         # AIR: typed SSA IR + printer + verifier
+│   ├── aether-lower/       # AST → AIR lowering
+│   └── aether-air-interp/  # AIR interpreter
+├── .github/workflows/      # CI
+└── *.md                    # project-management documents (see below)
 ```
 
-The full planned crate graph (lexer, parser, AIR, optimizer, backends, …) is
+The full planned crate graph (optimizer, analyses, backends, …) is
 documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). Crates are created only when
 something depends on them, so the tree grows one milestone at a time.
 

@@ -10,6 +10,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-air-interp"
+version = "0.0.0"
+dependencies = [
+ "aether-air",
+ "aether-lexer",
+ "aether-lower",
+ "aether-parser",
+ "aether-source",
+]
+
+[[package]]
 name = "aether-ast"
 version = "0.0.0"
 dependencies = [
@@ -61,6 +72,7 @@ name = "aetherc"
 version = "0.0.0"
 dependencies = [
  "aether-air",
+ "aether-air-interp",
  "aether-ast",
  "aether-diagnostics",
  "aether-lexer",

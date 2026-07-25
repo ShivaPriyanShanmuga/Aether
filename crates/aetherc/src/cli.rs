@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use aether_air_interp::RunError;
 use aether_diagnostics::{Diagnostic, DiagnosticHandler, render};
 use aether_lexer::{LexResult, Token, tokenize};
 use aether_parser::ParseResult;
@@ -29,8 +30,9 @@ mod exit {
     pub(super) const COMPILE_ERROR: u8 = 1;
     /// The command line was malformed (unknown flag, missing/extra argument).
     pub(super) const USAGE: u8 = 2;
-    /// A recognized operation is not yet implemented.
-    pub(super) const UNIMPLEMENTED: u8 = 3;
+    /// A runtime error occurred while executing the program (mirrors
+    /// `EX_SOFTWARE` from `sysexits.h`).
+    pub(super) const RUNTIME_ERROR: u8 = 70;
     /// An I/O failure occurred (mirrors `EX_IOERR` from `sysexits.h`).
     pub(super) const IO: u8 = 74;
 }
@@ -149,11 +151,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 
 /// Handle the `compile` command.
 ///
-/// Runs the phases that exist today — lex, parse, lower to AIR, verify — over the
-/// input, reporting diagnostics through the real renderer. Each `--dump-*` flag
-/// stops the pipeline after its phase and prints that phase's output. The
-/// interpreter does not exist yet, so a program that lowers and verifies cleanly
-/// reports the pipeline as unimplemented rather than pretending to run it.
+/// Runs the full pipeline — lex, parse, lower to AIR, verify, and interpret —
+/// over the input, reporting diagnostics through the real renderer. Each
+/// `--dump-*` flag stops the pipeline after its phase and prints that phase's
+/// output; otherwise the program is executed and `main`'s result is printed.
 fn compile(input: &Path, dump_tokens: bool, dump_ast: bool, dump_air: bool) -> ExitCode {
     let source = match std::fs::read_to_string(input) {
         Ok(source) => source,
@@ -215,12 +216,24 @@ fn compile(input: &Path, dump_tokens: bool, dump_ast: bool, dump_air: bool) -> E
         return finish(&handler, &sources, exit::COMPILE_ERROR);
     }
 
-    // Everything implemented has run; there is no interpreter yet.
-    handler.emit(
-        Diagnostic::error("the Aether compilation pipeline is not yet implemented beyond AIR")
-            .with_note("the AIR interpreter lands in M5 (see ROADMAP.md)"),
-    );
-    finish(&handler, &sources, exit::UNIMPLEMENTED)
+    // Execute `main` and print its result.
+    match aether_air_interp::interpret(&module) {
+        Ok(result) => {
+            println!("{result}");
+            finish(&handler, &sources, exit::SUCCESS)
+        }
+        Err(RunError::NoEntryPoint) => {
+            handler.emit(Diagnostic::error("no `main` function to execute"));
+            finish(&handler, &sources, exit::COMPILE_ERROR)
+        }
+        Err(RunError::DivisionByZero { span }) => {
+            handler.emit(
+                Diagnostic::error("division by zero")
+                    .with_primary(span, "the divisor evaluates to zero"),
+            );
+            finish(&handler, &sources, exit::RUNTIME_ERROR)
+        }
+    }
 }
 
 /// Render all buffered diagnostics to stderr and return `code` as an exit code.
@@ -267,7 +280,8 @@ fn usage() -> String {
 fn help_string() -> String {
     format!(
         "{version}\n\
-         Aether compiler driver.\n\
+         Aether compiler driver. Compiles and runs an Aether source file,\n\
+         printing the value returned by `main`.\n\
          \n\
          {usage}\n\
          \n\

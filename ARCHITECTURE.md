@@ -76,7 +76,7 @@ below therefore distinguishes what exists today from what is planned.
 | `aether-parser` | Recursive-descent parser → AST | **exists** |
 | `aether-air` | AIR data structures, builder, verifier, textual printer | **exists** |
 | `aether-lower` | AST → AIR lowering | **exists** |
-| `aether-air-interp` | AIR interpreter (first execution target) | planned (M5) |
+| `aether-air-interp` | AIR interpreter (first execution target) | **exists** |
 | `aether-sema` | Name resolution and type checking | planned (Phase 2) |
 | `aether-analysis` | Analysis framework (CFG, dominators, dataflow, …) | planned (Phase 3) |
 | `aether-opt` | Pass manager and optimization passes | planned (Phase 3) |

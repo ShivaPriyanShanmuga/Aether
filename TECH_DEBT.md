@@ -23,13 +23,13 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Notes.** `--` (end-of-options) is currently treated as an unknown option;
   fold this into the `clap` migration.
 
-### TD-0002 — `aetherc` compilation pipeline is a stub
+### TD-0002 — `aetherc` compilation pipeline is a stub — ✅ resolved (M5)
 - **Severity:** low (by design)
-- **Context.** The `compile` path reads the input file and reports that the
-  pipeline is unimplemented (exit code 3).
-- **Impact.** No compilation happens yet.
-- **Trigger.** Resolved incrementally across Phase 1 (M1–M5); fully paid down when
-  M5 wires the interpreter through the driver.
+- **Context.** The `compile` path originally read the input and reported the
+  pipeline as unimplemented (exit code 3).
+- **Resolution.** Paid down incrementally across Phase 1; as of M5 the driver runs
+  the full pipeline (lex → parse → lower → verify → interpret) and executes
+  programs. See the Resolved items section.
 
 ### TD-0003 — Single MIT license
 - **Severity:** low
@@ -214,8 +214,36 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add a textual AIR parser if/when hand-written IR tests or an
   `aetherc` "assemble AIR" entry point are wanted.
 
+### TD-0023 — Interpreter executes only the entry block
+- **Severity:** medium
+- **Context.** `run_function` evaluates the entry block and acts on its
+  terminator; it does not follow branches between blocks (there are none yet).
+- **Impact.** No control flow can be executed. Pairs with TD-0019 (single-block
+  AIR).
+- **Trigger.** Extend to CFG execution (a work-list / successor-following loop,
+  and phi/block-parameter handling) alongside control-flow language features (M6).
+
+### TD-0024 — Runtime values are `i64` only
+- **Severity:** low
+- **Context.** The interpreter represents every runtime value as `i64`; there is
+  no runtime value enum because `int` is the only type.
+- **Impact.** Cannot represent other types (booleans, etc.).
+- **Trigger.** Introduce a runtime `Value` enum when the type system adds more
+  types (M8).
+
+### TD-0025 — Overflow policy is provisional (wrapping)
+- **Severity:** low
+- **Context.** Per ADR-0015 the interpreter wraps on integer overflow. This is a
+  provisional interpreter choice, not a ratified language semantics.
+- **Impact.** The language has no defined/checked overflow behavior yet.
+- **Trigger.** Decide the language's overflow policy (wrap / checked / saturating,
+  possibly per-type or per-operator) with the type system (M8) and align the
+  interpreter and any future backend with it.
+
 ---
 
 ## Resolved items
 
-_None yet._
+- **TD-0002 — `aetherc` compilation pipeline is a stub.** Resolved in M5: the
+  driver runs the full pipeline (lex → parse → lower → verify → interpret) and
+  executes programs, printing `main`'s result. Complete for the minimal language.

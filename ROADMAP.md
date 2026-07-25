@@ -21,11 +21,12 @@ Establish the platform's skeleton, tooling, and standards.
 
 ---
 
-## Phase 1 — First Light *(minimal end-to-end pipeline)*
+## Phase 1 — First Light *(minimal end-to-end pipeline)* — ✅ complete
 
-Goal: compile and run a trivial program end to end, e.g.
-`fn main() -> int { return 1 + 2; }` yielding the result `3`, via the AIR
-interpreter. This validates the whole architecture against a real program early.
+Goal (achieved): compile and run a trivial program end to end, e.g.
+`fn main() -> int { return 1 + 2; }` yielding `3`, via the AIR interpreter. The
+whole architecture (lexer → parser → lowering → AIR → interpreter) is now
+validated against real programs.
 
 - **M1 — Source & diagnostics infrastructure** ✅
   `aether-source` (`SourceMap`, `Span`, byte→line/column mapping) and
@@ -43,9 +44,11 @@ interpreter. This validates the whole architecture against a real program early.
   `aether-air` (typed, SSA, id/arena IR + textual printer + verifier) and
   `aether-lower` (AST → AIR); ratified the AIR design (ADR-0013, supersedes
   ADR-0006); `aetherc` gained a `--dump-air` flag.
-- **M5 — AIR interpreter** ⬜ ← next
-  `aether-air-interp`: execute AIR and produce the program's result. **First
-  runnable end-to-end pipeline** wired through `aetherc`.
+- **M5 — AIR interpreter** ✅
+  `aether-air-interp`: executes AIR and produces the program's result (wrapping
+  arithmetic; division by zero is a runtime error — ADR-0014/0015). **First
+  runnable end-to-end pipeline** — `aetherc file.ae` runs a program and prints
+  `main`'s result.
 
 ---
 
@@ -53,9 +56,18 @@ interpreter. This validates the whole architecture against a real program early.
 
 Grow the language and give the frontend real semantic teeth.
 
-- **M6 — Language expansion** ⬜
-  Local variables, blocks, `if`/`else`, comparison/boolean operators, multiple
-  functions and calls.
+- **M6 — Language expansion** ⬜ ← next
+  Grows the language beyond a single `return`. This is a larger milestone tackled
+  in slices across sessions, in dependency order:
+  1. **Local variables & bindings** (`let`, identifier expressions; a name→value
+     environment in lowering). Straight-line, so still single-block AIR — the
+     natural next slice to start with.
+  2. **Control flow** (`if`/`else`, comparison & boolean operators). Introduces
+     multi-block AIR, branch terminators, and SSA merges — where the phi-node vs.
+     block-parameter choice is decided (TD-0019) — plus CFG execution in the
+     interpreter.
+  3. **Functions: parameters & calls** (adds a `:` token, parameters, a call
+     instruction, and interpreter call frames).
 - **M7 — Name resolution & scopes** ⬜
   Resolve identifiers to bindings; scope and shadowing rules.
 - **M8 — Type system & checking** ⬜
@@ -117,4 +129,5 @@ add today's code.
 
 ## Next milestone
 
-**M5 — AIR interpreter.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M6 — Language expansion**, starting with local variables & bindings. See
+[`PROJECT_STATUS.md`](PROJECT_STATUS.md).

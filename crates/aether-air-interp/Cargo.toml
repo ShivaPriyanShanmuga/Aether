@@ -1,0 +1,20 @@
+[package]
+name = "aether-air-interp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "A tree-walking interpreter over AIR — the first execution target for Aether."
+
+[dependencies]
+aether-source = { path = "../aether-source" }
+aether-air = { path = "../aether-air" }
+
+[dev-dependencies]
+aether-lexer = { path = "../aether-lexer" }
+aether-parser = { path = "../aether-parser" }
+aether-lower = { path = "../aether-lower" }
+
+[lints]
+workspace = true

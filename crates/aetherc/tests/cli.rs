@@ -55,10 +55,27 @@ fn missing_input_is_a_usage_error() {
 }
 
 #[test]
-fn compiling_a_file_reports_unimplemented() {
+fn runs_a_program_and_prints_its_result() {
     let mut path: PathBuf = std::env::temp_dir();
-    path.push(format!("aetherc_it_{}.ae", std::process::id()));
-    std::fs::write(&path, b"fn main() -> int { return 0; }\n").expect("write temp source");
+    path.push(format!("aetherc_it_run_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() -> int { return 1 + 2 * 3; }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "7", "stdout was:\n{stdout}");
+}
+
+#[test]
+fn division_by_zero_is_a_runtime_error() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_divzero_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() -> int { return 1 / 0; }\n").expect("write temp source");
 
     let output = aetherc()
         .arg(&path)
@@ -68,9 +85,32 @@ fn compiling_a_file_reports_unimplemented() {
 
     assert_eq!(
         output.status.code(),
-        Some(3),
-        "expected UNIMPLEMENTED exit code"
+        Some(70),
+        "expected RUNTIME_ERROR exit code"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("division by zero"), "stderr was:\n{stderr}");
+}
+
+#[test]
+fn missing_main_is_an_error() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_nomain_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn other() -> int { return 1; }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected COMPILE_ERROR exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no `main`"), "stderr was:\n{stderr}");
 }
 
 #[test]

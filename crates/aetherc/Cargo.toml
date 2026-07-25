@@ -19,6 +19,7 @@ aether-ast = { path = "../aether-ast" }
 aether-parser = { path = "../aether-parser" }
 aether-air = { path = "../aether-air" }
 aether-lower = { path = "../aether-lower" }
+aether-air-interp = { path = "../aether-air-interp" }
 
 [lints]
 workspace = true

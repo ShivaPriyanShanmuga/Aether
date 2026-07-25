@@ -378,3 +378,57 @@ block per function, the instruction set needed for integer arithmetic
 (`int`). A textual *parser* (full round-tripping), multi-block CFGs with
 phi/block-parameters, dominance-based verification, and richer types/instructions
 are future work tracked in `TECH_DEBT.md` and the roadmap.
+
+---
+
+## ADR-0014 — A program's result is printed to stdout
+
+**Status:** Accepted
+
+**Context.** With the interpreter (M5), `aetherc` can execute a program. The result
+of `main` needs to be surfaced to the user, and running needs a place in the CLI.
+
+**Alternatives considered.**
+- **Use `main`'s return value as the process exit code** (Unix-style). Rejected as
+  the default: exit codes are limited to 0–255 and would **collide** with the
+  driver's own codes (a program returning `1` would be indistinguishable from a
+  compile error, `2` from a usage error, etc.).
+- **Gate execution behind an explicit `--run` flag.** Deferred: with no native
+  codegen yet, running is the only useful thing to do with a valid program, so it
+  is the natural default.
+
+**Decision.** Executing is the **default** action of `aetherc <file>`; the
+interpreter runs `main` and its integer result is **printed to stdout** (one
+line). Successful execution exits `0`. The `--dump-*` flags remain explicit early
+stops.
+
+**Rationale.** Printing the value is unambiguous, unbounded, and easy to test,
+and it keeps the driver's exit-code scheme intact. A distinct `RUNTIME_ERROR`
+(exit 70) is used for runtime failures such as division by zero.
+
+**Consequences.** The old "unimplemented beyond AIR" path (exit 3) is removed.
+When native codegen arrives (Phase 4), the default may become "emit a binary"
+with an explicit `--run`/`-i` for interpretation; this ADR would be revisited.
+
+---
+
+## ADR-0015 — Interpreter arithmetic: wrapping, with division-by-zero as a runtime error
+
+**Status:** Accepted *(provisional; to be formalized with the type system, M8)*
+
+**Context.** The interpreter must define the semantics of integer arithmetic,
+including overflow and division by zero.
+
+**Decision.** Integer arithmetic **wraps** (two's complement, via `wrapping_*`).
+**Division by zero is a runtime error** (`RunError::DivisionByZero`) carrying the
+offending source span, rendered as a caret diagnostic and exiting with
+`RUNTIME_ERROR`.
+
+**Rationale.** Wrapping is the simplest fully-defined behavior and also tames the
+edge cases that would otherwise panic (`i64::MIN / -1`, `neg(i64::MIN)`). Division
+by zero has no defined value, so it must be an error rather than a wrapped result.
+
+**Consequences.** These are **provisional interpreter semantics**. The language's
+real overflow policy (wrapping vs. checked vs. saturating) is a type-system-level
+decision to be made in M8 (TD-0025); this ADR will be revisited then. There is no
+runtime value type yet — results are `i64` — pending more types (TD-0024).
