@@ -19,6 +19,8 @@ pub enum TokenKind {
     Fn,
     /// The `return` keyword.
     Return,
+    /// The `let` keyword.
+    Let,
 
     /// A left parenthesis `(`.
     LParen,
@@ -44,6 +46,8 @@ pub enum TokenKind {
     Slash,
     /// An arrow `->`.
     Arrow,
+    /// An equals sign `=`.
+    Eq,
 
     /// The end of the input. Always the final token; has an empty span.
     Eof,
@@ -60,6 +64,7 @@ impl TokenKind {
             Int => "integer literal",
             Fn => "keyword `fn`",
             Return => "keyword `return`",
+            Let => "keyword `let`",
             LParen => "`(`",
             RParen => "`)`",
             LBrace => "`{`",
@@ -71,6 +76,7 @@ impl TokenKind {
             Star => "`*`",
             Slash => "`/`",
             Arrow => "`->`",
+            Eq => "`=`",
             Eof => "end of file",
         }
     }
@@ -78,7 +84,7 @@ impl TokenKind {
     /// Whether this kind is a reserved keyword.
     #[must_use]
     pub fn is_keyword(self) -> bool {
-        matches!(self, TokenKind::Fn | TokenKind::Return)
+        matches!(self, TokenKind::Fn | TokenKind::Return | TokenKind::Let)
     }
 }
 
@@ -88,6 +94,7 @@ pub(crate) fn keyword(lexeme: &str) -> Option<TokenKind> {
     match lexeme {
         "fn" => Some(TokenKind::Fn),
         "return" => Some(TokenKind::Return),
+        "let" => Some(TokenKind::Let),
         _ => None,
     }
 }
@@ -117,6 +124,7 @@ mod tests {
     fn keywords_are_recognized() {
         assert_eq!(keyword("fn"), Some(TokenKind::Fn));
         assert_eq!(keyword("return"), Some(TokenKind::Return));
+        assert_eq!(keyword("let"), Some(TokenKind::Let));
     }
 
     #[test]

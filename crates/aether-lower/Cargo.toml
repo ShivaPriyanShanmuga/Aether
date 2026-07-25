@@ -9,6 +9,7 @@ description = "Lowering from the Aether AST to AIR."
 
 [dependencies]
 aether-source = { path = "../aether-source" }
+aether-diagnostics = { path = "../aether-diagnostics" }
 aether-ast = { path = "../aether-ast" }
 aether-air = { path = "../aether-air" }
 

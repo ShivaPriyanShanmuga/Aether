@@ -56,18 +56,18 @@ validated against real programs.
 
 Grow the language and give the frontend real semantic teeth.
 
-- **M6 — Language expansion** ⬜ ← next
-  Grows the language beyond a single `return`. This is a larger milestone tackled
-  in slices across sessions, in dependency order:
-  1. **Local variables & bindings** (`let`, identifier expressions; a name→value
-     environment in lowering). Straight-line, so still single-block AIR — the
-     natural next slice to start with.
-  2. **Control flow** (`if`/`else`, comparison & boolean operators). Introduces
-     multi-block AIR, branch terminators, and SSA merges — where the phi-node vs.
-     block-parameter choice is decided (TD-0019) — plus CFG execution in the
-     interpreter.
-  3. **Functions: parameters & calls** (adds a `:` token, parameters, a call
-     instruction, and interpreter call frames).
+- **M6 — Language expansion** 🚧 in progress
+  Grows the language beyond a single `return`. Tackled in slices across sessions,
+  in dependency order:
+  1. **Local variables & bindings** ✅ — `let`, identifier expressions, and a
+     name→value environment in lowering (straight-line, single-block AIR; lowering
+     does provisional name resolution — ADR-0016).
+  2. **Control flow** ⬜ ← next — `if`/`else`, comparison & boolean operators.
+     Introduces multi-block AIR, branch terminators, and SSA merges — where the
+     phi-node vs. block-parameter choice is decided (TD-0019) — plus CFG execution
+     in the interpreter.
+  3. **Functions: parameters & calls** ⬜ — adds a `:` token, parameters, a call
+     instruction, and interpreter call frames.
 - **M7 — Name resolution & scopes** ⬜
   Resolve identifiers to bindings; scope and shadowing rules.
 - **M8 — Type system & checking** ⬜
@@ -129,5 +129,5 @@ add today's code.
 
 ## Next milestone
 
-**M6 — Language expansion**, starting with local variables & bindings. See
+**M6 — Language expansion**, next slice: control flow (`if`/`else`). See
 [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

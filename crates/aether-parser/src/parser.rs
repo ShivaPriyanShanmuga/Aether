@@ -1,6 +1,8 @@
 //! The recursive-descent parser with Pratt expression parsing.
 
-use aether_ast::{BinOp, Block, Expr, FnDecl, Ident, Item, Program, ReturnStmt, Stmt, Type, UnOp};
+use aether_ast::{
+    BinOp, Block, Expr, FnDecl, Ident, Item, LetStmt, Program, ReturnStmt, Stmt, Type, UnOp,
+};
 use aether_diagnostics::Diagnostic;
 use aether_lexer::{Token, TokenKind};
 use aether_source::{SourceFile, Span};
@@ -206,7 +208,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt(&mut self) -> Option<Stmt> {
-        if self.at(TokenKind::Return) {
+        if self.at(TokenKind::Let) {
+            self.parse_let_stmt().map(Stmt::Let)
+        } else if self.at(TokenKind::Return) {
             self.parse_return_stmt().map(Stmt::Return)
         } else {
             let found = self.peek();
@@ -217,6 +221,21 @@ impl<'a> Parser<'a> {
             );
             None
         }
+    }
+
+    fn parse_let_stmt(&mut self) -> Option<LetStmt> {
+        let kw = self.bump().span; // `let`
+        let name = self.parse_ident()?;
+        self.expect(TokenKind::Eq)?;
+        let init = self.parse_expr(0);
+        let end = self
+            .expect(TokenKind::Semicolon)
+            .unwrap_or_else(|| init.span());
+        Some(LetStmt {
+            name,
+            span: kw.to(end),
+            init,
+        })
     }
 
     fn parse_return_stmt(&mut self) -> Option<ReturnStmt> {
@@ -286,6 +305,13 @@ impl<'a> Parser<'a> {
                 let inner = self.parse_expr(0);
                 self.expect(TokenKind::RParen);
                 inner
+            }
+            TokenKind::Ident => {
+                let token = self.bump();
+                Expr::Name {
+                    name: self.lexeme(token.span).to_string(),
+                    span: token.span,
+                }
             }
             _ => {
                 self.error(
@@ -471,5 +497,41 @@ Program
     fn empty_input_is_empty_program() {
         let tree = parse_ok("");
         assert_eq!(tree, "Program");
+    }
+
+    #[test]
+    fn parses_let_bindings_and_name_references() {
+        let tree = parse_ok("fn main() -> int { let x = 1 + 2; return x * x; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"main\" -> \"int\"
+    Block
+      Let \"x\"
+        Binary +
+          IntLit 1
+          IntLit 2
+      Return
+        Binary *
+          Name \"x\"
+          Name \"x\""
+        );
+    }
+
+    #[test]
+    fn multiple_statements_in_order() {
+        let tree = parse_ok("fn main() -> int { let a = 1; let b = 2; return a; }");
+        // Two `let`s then a `return`, in source order.
+        let a = tree.find("Let \"a\"").unwrap();
+        let b = tree.find("Let \"b\"").unwrap();
+        let ret = tree.find("Return").unwrap();
+        assert!(a < b && b < ret, "statements out of order:\n{tree}");
+    }
+
+    #[test]
+    fn let_missing_equals_reports() {
+        let (_tree, diags) = parse_str("fn f() -> int { let x 5; return x; }");
+        assert!(diags.iter().any(|d| d.message.contains("expected `=`")));
     }
 }

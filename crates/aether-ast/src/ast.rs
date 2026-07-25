@@ -70,10 +70,12 @@ pub struct Block {
 
 /// A statement.
 ///
-/// Only `return` exists today; this is an enum because more statement kinds
-/// (`let`, expression statements, …) will be added.
+/// This is an enum because more statement kinds (expression statements, …) will
+/// be added.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stmt {
+    /// A `let NAME = <expr>;` binding.
+    Let(LetStmt),
     /// A `return <expr>;` statement.
     Return(ReturnStmt),
 }
@@ -83,9 +85,21 @@ impl Stmt {
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
+            Stmt::Let(l) => l.span,
             Stmt::Return(r) => r.span,
         }
     }
+}
+
+/// A `let NAME = <expr>;` binding of a local variable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LetStmt {
+    /// The bound name.
+    pub name: Ident,
+    /// The initializer expression.
+    pub init: Expr,
+    /// The span from the `let` keyword to the semicolon.
+    pub span: Span,
 }
 
 /// A `return <expr>;` statement.
@@ -127,6 +141,13 @@ pub enum Expr {
         /// The span covering both operands.
         span: Span,
     },
+    /// A reference to a name, such as a local variable.
+    Name {
+        /// The referenced name's text.
+        name: String,
+        /// The reference's span.
+        span: Span,
+    },
     /// A placeholder produced when parsing failed here, so that recovery can
     /// continue without cascading errors.
     Error {
@@ -143,6 +164,7 @@ impl Expr {
             Expr::IntLit { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
+            | Expr::Name { span, .. }
             | Expr::Error { span } => *span,
         }
     }

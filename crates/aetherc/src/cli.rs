@@ -200,8 +200,14 @@ fn compile(input: &Path, dump_tokens: bool, dump_ast: bool, dump_air: bool) -> E
         return finish(&handler, &sources, exit::COMPILE_ERROR);
     }
 
-    // Lowering to AIR, then structural verification.
-    let module = aether_lower::lower(&program);
+    // Lowering to AIR (may emit name-resolution diagnostics), then verification.
+    let aether_lower::LowerResult {
+        module,
+        diagnostics,
+    } = aether_lower::lower(&program);
+    for diagnostic in diagnostics {
+        handler.emit(diagnostic);
+    }
     for error in aether_air::verify(&module) {
         handler.emit(Diagnostic::error(format!(
             "AIR verification failed: {}",

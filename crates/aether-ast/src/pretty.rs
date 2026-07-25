@@ -74,6 +74,12 @@ impl Printer {
 
     fn stmt(&mut self, stmt: &Stmt) {
         match stmt {
+            Stmt::Let(l) => {
+                self.line(format!("Let \"{}\"", l.name.name));
+                self.depth += 1;
+                self.expr(&l.init);
+                self.depth -= 1;
+            }
             Stmt::Return(r) => {
                 self.line("Return");
                 self.depth += 1;
@@ -99,6 +105,7 @@ impl Printer {
                 self.expr(rhs);
                 self.depth -= 1;
             }
+            Expr::Name { name, .. } => self.line(format!("Name \"{name}\"")),
             Expr::Error { .. } => self.line("Error"),
         }
     }

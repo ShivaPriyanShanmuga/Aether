@@ -240,6 +240,32 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
   possibly per-type or per-operator) with the type system (M8) and align the
   interpreter and any future backend with it.
 
+### TD-0026 — Name resolution is done in lowering
+- **Severity:** medium
+- **Context.** Per ADR-0016, `aether-lower` resolves identifiers to `let` bindings
+  via a name → value environment and emits "cannot find name" diagnostics itself.
+- **Impact.** Lowering mixes a semantic concern (resolution) with translation, and
+  is fallible as a result.
+- **Trigger.** Introduce a dedicated name-resolution pass (M9) that resolves names
+  (and enforces scope rules) ahead of lowering; lowering then assumes resolved
+  names and becomes infallible again.
+
+### TD-0027 — Variable scope is a single flat environment
+- **Severity:** low
+- **Context.** The lowering environment is one flat `HashMap` per function.
+  Redefining a name rebinds it (last wins); there are no nested/block scopes.
+- **Impact.** No lexical block scoping or formal shadowing rules yet.
+- **Trigger.** Add scoped environments (a scope stack) alongside control-flow
+  blocks (M6 slice 2), and formalize shadowing in name resolution (M9).
+
+### TD-0028 — `let` has no type annotation
+- **Severity:** low
+- **Context.** `let x = <expr>;` infers `int` (the only type). Type-annotated
+  bindings (`let x: T = …`) need the `:` token (also TD-0018) and a real type
+  system.
+- **Impact.** Bindings cannot be explicitly typed.
+- **Trigger.** Add the `:` token and annotation parsing with the type system (M8).
+
 ---
 
 ## Resolved items

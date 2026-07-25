@@ -1,9 +1,9 @@
 # Aether — Project Status
 
 **Snapshot date:** 2026-07-25
-**Current phase:** Phase 1 — First Light → ✅ **complete**
-**Current milestone:** M5 — AIR interpreter → ✅ **complete**
-**Next milestone:** M6 — Language expansion (starting with local variables)
+**Current phase:** Phase 2 — Language & Frontend Depth
+**Current milestone:** M6 — Language expansion 🚧 (slice 1 of 3 complete)
+**Next milestone:** M6 slice 2 — control flow (`if`/`else`)
 
 This document is the first thing to read at the start of a session. It reflects
 the repository's actual state, which always takes precedence over any external
@@ -11,94 +11,93 @@ memory or conversation history.
 
 ---
 
-## Milestone
+## Current milestone: M6 — Language expansion
 
-**Phase 1 (First Light) is complete.** A source program now compiles and runs end
-to end — the entire architecture (lexer → parser → lowering → AIR → interpreter)
-is validated against real programs. `aetherc file.ae` runs a program and prints
-the value returned by `main`.
+M6 grows the language beyond a single `return`, in slices:
+
+1. **Local variables & bindings** — ✅ **complete** (this session).
+2. **Control flow** (`if`/`else`, comparison & boolean operators) — ⬜ next.
+3. **Functions: parameters & calls** — ⬜.
+
+### M6 slice 1 — local variables & bindings (complete)
+
+- `aether-lexer`: added the `let` keyword and the `=` token.
+- `aether-ast`: added `Stmt::Let` (a `LetStmt`) and `Expr::Name` (identifier
+  reference); pretty-printer updated.
+- `aether-parser`: parses `let NAME = <expr>;` and identifier expressions;
+  the block loop now lowers multiple statements in order.
+- `aether-lower`: threads a name → `Value` environment. A `let` binds a name to
+  the SSA value of its initializer; a reference resolves to it. Because this
+  resolves names, lowering is now fallible and returns `LowerResult { module,
+  diagnostics }` (unknown names → a "cannot find name" diagnostic). No new AIR,
+  runtime, or interpreter concepts were needed — a variable is just a named SSA
+  value (ADR-0016).
+- `aetherc`: consumes `LowerResult` and reports name-resolution errors.
+- Tests: **119 total, all passing** (+1 lexer, +3 parser, +2 lower, +1 interp,
+  +2 driver, net of doctest updates).
 
 ---
 
 ## Completed milestones
 
-- **M5 — AIR interpreter** ✅
-  - `aether-air-interp`: a tree-walking interpreter over AIR. Evaluates a
-    function's instructions (SSA values → `i64`) and acts on the terminator.
-    Wrapping arithmetic; division by zero is a runtime error carrying a span
-    (ADR-0015). Decoupled from diagnostics (returns a `RunError`).
-  - `aetherc` now **executes** by default: full pipeline (lex → parse → lower →
-    verify → interpret), printing `main`'s result to stdout (ADR-0014). New exit
-    code `RUNTIME_ERROR` (70); the old "unimplemented" path (exit 3) is gone.
-  - Two ADRs (ADR-0014 result surfacing; ADR-0015 arithmetic semantics).
-  - Tests: **111 total, all passing** (+9 interp incl. doctest, +2 driver net).
-- **M4 — AIR core & lowering** ✅
-  - `aether-air` (typed, SSA, id/arena IR + printer + verifier) and `aether-lower`
-    (AST → AIR); ratified AIR in ADR-0013.
-- **M3 — AST & parser** ✅
-  - `aether-ast` (Box tree + pretty-printer) and `aether-parser` (recursive
-    descent + Pratt, error recovery); `--dump-ast`.
-- **M2 — Lexer** ✅
-  - `aether-lexer`: payload-free `Copy` tokens, error recovery; `--dump-tokens`.
-- **M1 — Source & diagnostics infrastructure** ✅
-  - `aether-source` and `aether-diagnostics` (structured diagnostics + caret
-    rendering).
-- **M0 — Project foundation** ✅
-  - Cargo workspace, pinned toolchain, lint policy, CI, MIT license, driver
-    skeleton, and the seven project-management documents.
+- **M5 — AIR interpreter** ✅ — `aether-air-interp`; `aetherc` runs programs and
+  prints `main`'s result. (Phase 1 — First Light complete.)
+- **M4 — AIR core & lowering** ✅ — `aether-air` + `aether-lower`; ADR-0013.
+- **M3 — AST & parser** ✅ — `aether-ast` + `aether-parser` (Pratt).
+- **M2 — Lexer** ✅ — `aether-lexer` (payload-free tokens).
+- **M1 — Source & diagnostics** ✅ — `aether-source` + `aether-diagnostics`.
+- **M0 — Project foundation** ✅ — workspace, tooling, CI, docs.
 
 ---
 
 ## Current progress
 
-Milestone 5 is finished; the workspace builds, lints cleanly, and all tests pass.
+M6 slice 1 is finished; the workspace builds, lints cleanly, and all tests pass.
 There is no in-progress work carried into the next session.
 
 **Verification (as of this snapshot):**
 - `cargo build --all-targets` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo fmt --all -- --check` — clean
-- `cargo test --all` — 111 passed, 0 failed
+- `cargo test --all` — 119 passed, 0 failed
 
-End-to-end, through the binary: `aetherc file.ae` for
-`fn main() -> int { return (10 - 4) * 7 + -2; }` prints `40` and exits `0`;
-`10 / (5 - 5)` prints a caret diagnostic "division by zero" and exits `70`. The
-`--dump-tokens` / `--dump-ast` / `--dump-air` flags stop after their phases.
+End-to-end: `aetherc file.ae` for
+`fn main() -> int { let x = 10; let y = x - 3; return x * y; }` prints `70`;
+an unknown variable prints "cannot find `…` in this scope" and exits `1`.
 
 ---
 
 ## Next recommended milestone
 
-**M6 — Language expansion**, beginning with its first slice: **local variables &
-bindings**.
+**M6 slice 2 — control flow (`if`/`else`).** This is the significant one: it
+introduces the first real control-flow graph.
 
-Rationale: Phase 1 proved the pipeline on a single `return`. The next depth is a
-real language. Local variables are the right first slice because they add genuine
-expressiveness while staying **straight-line** — no control flow, so AIR remains
-single-block and no SSA merges (phi/block-parameters) are needed yet. This keeps
-the milestone focused and defers the harder CFG work to the control-flow slice.
+Why now: local variables proved the frontend can grow while AIR stayed
+single-block. Control flow is what finally exercises AIR's CFG design and forces
+the decisions deferred since M4.
 
-Suggested scope (slice 1 — local variables):
-- Lexer: add the `let` keyword and the `=` token.
-- Grammar/AST: a `let NAME = <expr>;` statement, a sequence of statements before
-  the `return`, and an identifier expression (`Expr::Path`/`Name`) that refers to
-  a binding.
-- Lowering: maintain a name → `Value` environment; `let` binds a name to the
-  value of its initializer; an identifier expression resolves to that value. Still
-  one block. (This is trivial SSA — no phi — because there is no control flow.)
-- Decide how an unknown identifier is reported (a lowering/resolution diagnostic
-  now, or deferred to the M9 name-resolution pass) — record the choice.
-- Reassess whether interning / a `Session` is now justified (TD-0010): a name
-  environment is the first place symbol comparison happens, though a `String` or
-  `&str` keyed map is fine at this scale.
-- Tests: parser (let statements, identifier expressions, precedence unaffected),
-  lowering golden tests (env resolves names to values), interpreter results, and a
-  driver end-to-end test.
+Suggested scope:
+- Lexer: comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=` — note `==`/`!=`
+  need two-char lookahead like `->`) and boolean operators (`&&`, `||`, `!`), plus
+  keywords `if`/`else` (and likely `true`/`false` with a `bool` type).
+- A `bool` type in AIR and a comparison instruction producing a boolean; the type
+  system is still informal, so decide how `bool` and `int` coexist provisionally.
+- AST: `if <cond> { … } else { … }` (as a statement and/or expression), boolean
+  literals, comparison/logical expressions.
+- **AIR: multiple basic blocks and branch terminators** (`br`, `condbr`). This is
+  where the **phi-node vs. block-parameter** decision for SSA merges must be made
+  and recorded as an ADR (TD-0019). Extend the verifier to dominance-based
+  def-before-use across blocks.
+- **Lowering**: build a CFG (then/else/join blocks); introduce **scoped**
+  environments (a scope stack) for block bodies (TD-0027); handle SSA merges for
+  values assigned on both branches.
+- **Interpreter**: follow branches between blocks (TD-0023); execute phi /
+  block-parameter transfers.
+- Tests at every layer, plus end-to-end programs whose output depends on a branch.
 
-Later slices of M6 (separate sessions): **control flow** (`if`/`else`, comparison
-& boolean operators; multi-block AIR + SSA merges + CFG execution — the point to
-decide phi vs. block parameters, TD-0019/TD-0023) and **functions: parameters &
-calls** (`:` token, params, a call instruction, interpreter call frames).
+This slice is itself large; if needed, split it (e.g. comparisons + `bool` first,
+then `if`/`else` + CFG). Decide the SSA-merge representation early — it shapes
+lowering, the interpreter, and every future analysis.
 
 Follow the standard workflow: review theory and alternatives, record decisions,
 plan, then implement — and leave the repository green with updated docs.
@@ -107,26 +106,25 @@ plan, then implement — and leave the repository green with updated docs.
 
 ## Architecture health
 
-**Green.** Eight crates with clean, one-directional dependencies:
-`aether-source` (no deps) is the base; `aether-diagnostics`, `aether-lexer`,
-`aether-ast`, `aether-air` build on it; `aether-parser` sits above the frontend;
-`aether-lower` bridges AST → AIR; `aether-air-interp` executes AIR; the driver
-orchestrates. No cycles, no premature abstractions, no placeholder crates. The
-AST `Box` tree (ADR-0011) and AIR id/arena (ADR-0013) split is deliberate.
-`aether-support` and a `Session` type are still unneeded and stay deferred
-(TD-0010) — to be reconsidered when local variables introduce a name environment.
+**Green.** Eight crates, clean one-directional dependencies. `aether-lower` now
+also depends on `aether-diagnostics` (a foundational crate — allowed by the
+dependency rules) because it performs provisional name resolution. No cycles, no
+placeholder crates. The one deliberate smudge — resolution living in lowering
+(ADR-0016) — is tracked (TD-0026) with a clear exit (a dedicated pass at M9).
+`aether-support` and a `Session` type remain unneeded (TD-0010): a flat
+`HashMap<String, Value>` sufficed for the variable environment.
 
 ---
 
 ## Outstanding work / technical debt
 
-Nothing blocking. Tracked in [`TECH_DEBT.md`](TECH_DEBT.md). Resolved in M5:
-TD-0002 (pipeline stub). From M5: interpreter executes only the entry block
-(TD-0023), runtime values are `i64` only (TD-0024), overflow policy is provisional
-(TD-0025). Carry-overs: single-block AIR / no phi yet (TD-0019),
-missing-return-as-verifier-error pending M8 (TD-0020), literal/type-range checks
-deferred to M8 (TD-0021), no AIR text parser (TD-0022), parser
-recovery/depth/params (TD-0016…0018), lexer limits (TD-0011…0015), `Span` packing
-(TD-0006), diagnostic polish (TD-0007/8/9), deferred `Session` (TD-0010), and the
-hand-rolled CLI → `clap` migration (TD-0001), now carrying four `--dump-*` flags
-plus the default run behavior.
+Nothing blocking. Tracked in [`TECH_DEBT.md`](TECH_DEBT.md). New from M6 slice 1:
+name resolution in lowering (TD-0026), single flat variable scope (TD-0027),
+no `let` type annotations (TD-0028). The big carry-overs that M6 slice 2 will
+resolve: single-block AIR / no phi (TD-0019), entry-block-only interpreter
+(TD-0023). Others: missing-return / literal-range checks pending M8
+(TD-0020/0021), no AIR text parser (TD-0022), runtime-value/overflow provisional
+(TD-0024/0025), parser recovery/depth/params (TD-0016…0018), lexer limits
+(TD-0011…0015), `Span` packing (TD-0006), diagnostic polish (TD-0007/8/9),
+deferred `Session` (TD-0010), and the hand-rolled CLI → `clap` migration
+(TD-0001).

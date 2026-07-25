@@ -1,39 +1,54 @@
 //! The AST → AIR lowering pass.
 
-use aether_air::{BinaryOp, Block, Function, InstData, Module, Terminator, Type, UnaryOp, Value};
-use aether_ast::{self as ast, Expr, Program};
+use std::collections::HashMap;
 
-/// Lower a parsed [`Program`] into an AIR [`Module`].
+use aether_air::{BinaryOp, Function, InstData, Module, Terminator, Type, UnaryOp, Value};
+use aether_ast::{self as ast, Expr, Program};
+use aether_diagnostics::Diagnostic;
+use aether_source::Span;
+
+/// The result of lowering: the AIR module and any diagnostics produced.
 ///
-/// Lowering is mechanical and total: it assumes a well-formed AST (the driver
-/// only lowers after a clean parse). Structural validity of the result is the
-/// job of [`aether_air::verify`].
-#[must_use]
-pub fn lower(program: &Program) -> Module {
-    let mut module = Module::new();
-    for item in &program.items {
-        match item {
-            ast::Item::Fn(decl) => module.add_function(lower_fn(decl)),
-        }
-    }
-    module
+/// Lowering currently performs a small amount of name resolution (resolving
+/// identifiers to the values of `let` bindings), so it can fail — for example on
+/// an unknown name. A dedicated name-resolution pass will take over this
+/// responsibility later (see ADR-0016).
+#[derive(Debug)]
+pub struct LowerResult {
+    /// The lowered module (best-effort if diagnostics were produced).
+    pub module: Module,
+    /// Diagnostics emitted during lowering.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-fn lower_fn(decl: &ast::FnDecl) -> Function {
-    let mut function = Function::new(decl.name.name.clone(), lower_type(&decl.return_type));
-    let entry = function.entry();
-
-    // The minimal language's only statement is `return`, and the first one
-    // terminates the block (any following statements are unreachable). When more
-    // statement kinds exist (M6), this becomes a loop that lowers statements until
-    // a terminator is produced. A body with no `return` leaves the block
-    // unterminated, which the verifier reports.
-    if let Some(ast::Stmt::Return(ret)) = decl.body.stmts.first() {
-        let value = lower_expr(&mut function, entry, &ret.expr);
-        function.set_terminator(entry, Terminator::Ret(value));
+/// Lower a parsed [`Program`] into an AIR [`LowerResult`].
+///
+/// Assumes a well-formed AST (the driver only lowers after a clean parse).
+/// Structural validity of the resulting module is checked separately by
+/// [`aether_air::verify`].
+#[must_use]
+pub fn lower(program: &Program) -> LowerResult {
+    let mut module = Module::new();
+    let mut diagnostics = Vec::new();
+    for item in &program.items {
+        match item {
+            ast::Item::Fn(decl) => module.add_function(lower_fn(decl, &mut diagnostics)),
+        }
     }
+    LowerResult {
+        module,
+        diagnostics,
+    }
+}
 
-    function
+fn lower_fn(decl: &ast::FnDecl, diagnostics: &mut Vec<Diagnostic>) -> Function {
+    let mut lowerer = FnLowerer {
+        function: Function::new(decl.name.name.clone(), lower_type(&decl.return_type)),
+        env: HashMap::new(),
+        diagnostics,
+    };
+    lowerer.lower_body(&decl.body.stmts);
+    lowerer.function
 }
 
 /// Map an AST type to an AIR type. Only `int` exists; any named type lowers to
@@ -42,27 +57,81 @@ fn lower_type(_ty: &ast::Type) -> Type {
     Type::Int
 }
 
-/// Lower an expression, appending instructions to `block` and returning the
-/// [`Value`] holding its result.
-fn lower_expr(function: &mut Function, block: Block, expr: &Expr) -> Value {
-    match expr {
-        Expr::IntLit { value, span } => {
-            function.push_inst(block, InstData::IConst(*value as i64), Type::Int, *span)
+/// Per-function lowering state.
+struct FnLowerer<'a> {
+    function: Function,
+    /// Maps in-scope variable names to the SSA value holding their contents.
+    env: HashMap<String, Value>,
+    diagnostics: &'a mut Vec<Diagnostic>,
+}
+
+impl FnLowerer<'_> {
+    fn lower_body(&mut self, stmts: &[ast::Stmt]) {
+        let entry = self.function.entry();
+        for stmt in stmts {
+            match stmt {
+                ast::Stmt::Let(let_stmt) => {
+                    // Lower the initializer *before* binding the name, so the name
+                    // is not visible in its own initializer (use-before-def is an
+                    // error). A later binding of the same name simply rebinds.
+                    let value = self.lower_expr(entry, &let_stmt.init);
+                    self.env.insert(let_stmt.name.name.clone(), value);
+                }
+                ast::Stmt::Return(ret) => {
+                    let value = self.lower_expr(entry, &ret.expr);
+                    self.function.set_terminator(entry, Terminator::Ret(value));
+                    // The first `return` terminates the block; any following
+                    // statements are unreachable and are left unlowered.
+                    break;
+                }
+            }
         }
-        Expr::Unary { op, operand, span } => {
-            let operand = lower_expr(function, block, operand);
-            let op = lower_unop(*op);
-            function.push_inst(block, InstData::Unary { op, operand }, Type::Int, *span)
+    }
+
+    /// Lower an expression, appending instructions to `block` and returning the
+    /// [`Value`] holding its result.
+    fn lower_expr(&mut self, block: aether_air::Block, expr: &Expr) -> Value {
+        match expr {
+            Expr::IntLit { value, span } => {
+                self.function
+                    .push_inst(block, InstData::IConst(*value as i64), Type::Int, *span)
+            }
+            Expr::Unary { op, operand, span } => {
+                let operand = self.lower_expr(block, operand);
+                let op = lower_unop(*op);
+                self.function
+                    .push_inst(block, InstData::Unary { op, operand }, Type::Int, *span)
+            }
+            Expr::Binary { op, lhs, rhs, span } => {
+                let lhs = self.lower_expr(block, lhs);
+                let rhs = self.lower_expr(block, rhs);
+                let op = lower_binop(*op);
+                self.function
+                    .push_inst(block, InstData::Binary { op, lhs, rhs }, Type::Int, *span)
+            }
+            Expr::Name { name, span } => {
+                if let Some(&value) = self.env.get(name) {
+                    value
+                } else {
+                    self.error(*span, format!("cannot find `{name}` in this scope"));
+                    // Poison value so lowering stays total; the diagnostic stops
+                    // the program from being run.
+                    self.function
+                        .push_inst(block, InstData::IConst(0), Type::Int, *span)
+                }
+            }
+            // Poison nodes never reach lowering (it runs only after a clean parse);
+            // emit a constant so lowering stays total.
+            Expr::Error { span } => {
+                self.function
+                    .push_inst(block, InstData::IConst(0), Type::Int, *span)
+            }
         }
-        Expr::Binary { op, lhs, rhs, span } => {
-            let lhs = lower_expr(function, block, lhs);
-            let rhs = lower_expr(function, block, rhs);
-            let op = lower_binop(*op);
-            function.push_inst(block, InstData::Binary { op, lhs, rhs }, Type::Int, *span)
-        }
-        // Poison nodes never reach lowering (it runs only after a clean parse);
-        // emit a constant so lowering stays total.
-        Expr::Error { span } => function.push_inst(block, InstData::IConst(0), Type::Int, *span),
+    }
+
+    fn error(&mut self, span: Span, message: String) {
+        self.diagnostics
+            .push(Diagnostic::error(message).with_primary(span, "not found in this scope"));
     }
 }
 
@@ -86,18 +155,25 @@ mod tests {
     use super::*;
     use aether_source::SourceMap;
 
-    /// Parse `src` and lower it, returning the printed AIR.
+    /// Parse `src` and lower it, returning the printed AIR (asserting no
+    /// diagnostics and that the module verifies).
     fn lower_str(src: &str) -> String {
+        let (air, diags) = lower_checked(src);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        air
+    }
+
+    /// Parse and lower `src`, returning the printed AIR and any diagnostics.
+    fn lower_checked(src: &str) -> (String, Vec<Diagnostic>) {
         let mut map = SourceMap::new();
         let file = map.add_file("t.ae", src);
         let tokens = aether_lexer::tokenize(map.file(file)).tokens;
         let program = aether_parser::parse(map.file(file), &tokens).program;
-        let module = lower(&program);
-        assert!(
-            aether_air::verify(&module).is_empty(),
-            "lowered module failed verification"
-        );
-        aether_air::print(&module)
+        let LowerResult {
+            module,
+            diagnostics,
+        } = lower(&program);
+        (aether_air::print(&module), diagnostics)
     }
 
     #[test]
@@ -118,47 +194,48 @@ block0:
     }
 
     #[test]
-    fn lowers_unary_negation() {
+    fn lowers_let_bindings_reusing_the_value() {
+        // `x` is the `add` result; `x * x` reuses that value (no re-computation).
         assert_eq!(
-            lower_str("fn f() -> int { return -5; }"),
+            lower_str("fn main() -> int { let x = 1 + 2; return x * x; }"),
             "\
-fn f() -> int {
+fn main() -> int {
 block0:
-    %0 = iconst 5
-    %1 = neg %0
+    %0 = iconst 1
+    %1 = iconst 2
+    %2 = add %0, %1
+    %3 = mul %2, %2
+    ret %3
+}"
+        );
+    }
+
+    #[test]
+    fn later_binding_shadows_earlier() {
+        assert_eq!(
+            lower_str("fn main() -> int { let x = 1; let x = 2; return x; }"),
+            "\
+fn main() -> int {
+block0:
+    %0 = iconst 1
+    %1 = iconst 2
     ret %1
 }"
         );
     }
 
     #[test]
-    fn lowers_parenthesized_grouping() {
-        assert_eq!(
-            lower_str("fn f() -> int { return (1 + 2) * 3; }"),
-            "\
-fn f() -> int {
-block0:
-    %0 = iconst 1
-    %1 = iconst 2
-    %2 = add %0, %1
-    %3 = iconst 3
-    %4 = mul %2, %3
-    ret %4
-}"
-        );
+    fn unknown_name_is_a_diagnostic() {
+        let (_air, diags) = lower_checked("fn main() -> int { return y; }");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("cannot find `y`"));
     }
 
     #[test]
-    fn first_return_terminates_the_block() {
-        // The second return is unreachable and is not lowered.
-        assert_eq!(
-            lower_str("fn f() -> int { return 1; return 2; }"),
-            "\
-fn f() -> int {
-block0:
-    %0 = iconst 1
-    ret %0
-}"
-        );
+    fn name_not_visible_in_its_own_initializer() {
+        // `x` is not in scope inside its own initializer.
+        let (_air, diags) = lower_checked("fn main() -> int { let x = x; return x; }");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("cannot find `x`"));
     }
 }

@@ -432,3 +432,40 @@ by zero has no defined value, so it must be an error rather than a wrapped resul
 real overflow policy (wrapping vs. checked vs. saturating) is a type-system-level
 decision to be made in M8 (TD-0025); this ADR will be revisited then. There is no
 runtime value type yet — results are `i64` — pending more types (TD-0024).
+
+---
+
+## ADR-0016 — Local variables lower via an SSA name environment; lowering resolves names (provisionally)
+
+**Status:** Accepted *(provisional; name resolution moves to a dedicated pass at M9)*
+
+**Context.** Local variables (`let x = …;` and references to `x`) need a
+representation. AIR is SSA, and the M6 language is straight-line (no control flow
+yet), so there are no control-flow merges.
+
+**Decision.** Lower a local variable to the **SSA value of its initializer**, held
+in a name → `Value` environment threaded through lowering. A `let` binds the name;
+a name reference resolves to the bound value. Since resolution can fail (unknown
+name), **lowering is fallible**: it returns a `LowerResult { module, diagnostics }`
+and `aether-lower` depends on `aether-diagnostics`. An unknown name lowers to a
+poison `iconst 0` plus an error diagnostic, keeping lowering total.
+
+**Rationale.** With SSA and no control flow, a variable *is* just a named value —
+no new AIR instructions, no runtime concept, and no interpreter changes are
+needed. Threading an environment is the minimal mechanism. Lowering the
+initializer before binding the name gives correct use-before-definition behavior
+for free; a later `let` of the same name simply rebinds.
+
+**Alternatives considered.**
+- **A dedicated name-resolution pass** before lowering (producing a symbol table
+  or resolved AST). This is the right long-term design and arrives at M9; doing it
+  now would be premature infrastructure for one flat scope.
+- **Interning names / a `Session`** — not needed; a `HashMap<String, Value>` is
+  fine at this scale (TD-0010 holds).
+
+**Consequences.** Name resolution currently lives in lowering as a stopgap
+(TD-0026); the environment is a single flat scope with no nested-scope or formal
+shadowing rules yet (TD-0027) — those arrive with control-flow blocks. `let` has
+no type annotation (only `int` is inferred; the `:` token and annotations are
+deferred, TD-0028). When the M9 name-resolution pass lands, lowering will assume
+resolved names and this ADR will be revisited.

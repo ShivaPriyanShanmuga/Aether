@@ -119,6 +119,7 @@ impl<'src> Lexer<'src> {
             ',' => TokenKind::Comma,
             '+' => TokenKind::Plus,
             '*' => TokenKind::Star,
+            '=' => TokenKind::Eq,
             // `/` line comments are handled by `skip_trivia`, so a `/` here is division.
             '/' => TokenKind::Slash,
             '-' => {
@@ -323,6 +324,19 @@ mod tests {
             vec![
                 (TokenKind::Int, "42".to_string()),
                 (TokenKind::Eof, String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn let_binding_tokens() {
+        assert_eq!(
+            kinds("let x = 5"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Ident,
+                TokenKind::Eq,
+                TokenKind::Int,
             ]
         );
     }

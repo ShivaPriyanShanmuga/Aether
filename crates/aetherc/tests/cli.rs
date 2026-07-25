@@ -72,6 +72,51 @@ fn runs_a_program_and_prints_its_result() {
 }
 
 #[test]
+fn runs_a_program_with_local_variables() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_let_{}.ae", std::process::id()));
+    std::fs::write(
+        &path,
+        b"fn main() -> int { let x = 10; let y = x - 3; return x * y; }\n",
+    )
+    .expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "70", "stdout was:\n{stdout}");
+}
+
+#[test]
+fn unknown_variable_is_a_compile_error() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_unknown_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() -> int { return nope; }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected COMPILE_ERROR exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot find `nope`"),
+        "stderr was:\n{stderr}"
+    );
+}
+
+#[test]
 fn division_by_zero_is_a_runtime_error() {
     let mut path: PathBuf = std::env::temp_dir();
     path.push(format!("aetherc_it_divzero_{}.ae", std::process::id()));

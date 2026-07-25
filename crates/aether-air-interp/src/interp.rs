@@ -99,12 +99,13 @@ mod tests {
         let file = map.add_file("t.ae", src);
         let tokens = aether_lexer::tokenize(map.file(file)).tokens;
         let program = aether_parser::parse(map.file(file), &tokens).program;
-        let module = aether_lower::lower(&program);
+        let result = aether_lower::lower(&program);
+        assert!(result.diagnostics.is_empty(), "unexpected lowering errors");
         assert!(
-            aether_air::verify(&module).is_empty(),
+            aether_air::verify(&result.module).is_empty(),
             "test module failed verification"
         );
-        interpret(&module)
+        interpret(&result.module)
     }
 
     #[test]
@@ -153,5 +154,17 @@ mod tests {
         // i64::MAX + 1 wraps to i64::MIN.
         let src = format!("fn main() -> int {{ return {} + 1; }}", i64::MAX);
         assert_eq!(run_str(&src), Ok(i64::MIN));
+    }
+
+    #[test]
+    fn evaluates_local_variables() {
+        assert_eq!(
+            run_str("fn main() -> int { let x = 1 + 2; return x * x; }"),
+            Ok(9)
+        );
+        assert_eq!(
+            run_str("fn main() -> int { let x = 10; let y = x - 3; return x * y; }"),
+            Ok(70)
+        );
     }
 }

@@ -19,7 +19,7 @@
 //! let file = sources.add_file("demo.ae", "fn main() -> int { return 6 * 7; }");
 //! let tokens = aether_lexer::tokenize(sources.file(file)).tokens;
 //! let program = aether_parser::parse(sources.file(file), &tokens).program;
-//! let module = aether_lower::lower(&program);
+//! let module = aether_lower::lower(&program).module;
 //! assert_eq!(aether_air_interp::interpret(&module), Ok(42));
 //! ```
 

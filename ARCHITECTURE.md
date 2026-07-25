@@ -75,7 +75,7 @@ below therefore distinguishes what exists today from what is planned.
 | `aether-ast` | AST node definitions (+ pretty-printer) | **exists** |
 | `aether-parser` | Recursive-descent parser → AST | **exists** |
 | `aether-air` | AIR data structures, builder, verifier, textual printer | **exists** |
-| `aether-lower` | AST → AIR lowering | **exists** |
+| `aether-lower` | AST → AIR lowering (+ provisional name resolution) | **exists** |
 | `aether-air-interp` | AIR interpreter (first execution target) | **exists** |
 | `aether-sema` | Name resolution and type checking | planned (Phase 2) |
 | `aether-analysis` | Analysis framework (CFG, dominators, dataflow, …) | planned (Phase 3) |

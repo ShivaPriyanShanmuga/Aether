@@ -48,6 +48,7 @@ version = "0.0.0"
 dependencies = [
  "aether-air",
  "aether-ast",
+ "aether-diagnostics",
  "aether-lexer",
  "aether-parser",
  "aether-source",
