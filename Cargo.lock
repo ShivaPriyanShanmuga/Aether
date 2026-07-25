@@ -3,5 +3,20 @@
 version = 4
 
 [[package]]
+name = "aether-diagnostics"
+version = "0.0.0"
+dependencies = [
+ "aether-source",
+]
+
+[[package]]
+name = "aether-source"
+version = "0.0.0"
+
+[[package]]
 name = "aetherc"
 version = "0.0.0"
+dependencies = [
+ "aether-diagnostics",
+ "aether-source",
+]

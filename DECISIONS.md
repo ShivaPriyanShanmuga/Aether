@@ -172,3 +172,66 @@ lean keeps builds fast and the trust surface small while the design settles.
 migrate argument parsing to `clap` — tracked in [`TECH_DEBT.md`](TECH_DEBT.md).
 The MIT license was chosen for simplicity; dual MIT/Apache-2.0 (the Rust-ecosystem
 norm) remains an easy future option.
+
+---
+
+## ADR-0008 — Source positions are per-file byte-range spans
+
+**Status:** Accepted
+
+**Context.** Every token, AST node, and IR value must reference the source that
+produced it, so `Span` is attached pervasively; its size and interpretation cost
+matter.
+
+**Alternatives considered.**
+- **Line/column pairs on each node** — simple to read, but fat (a range is four
+  integers), invalidated by edits, and awkward to merge. Rejected by essentially
+  all production compilers.
+- **Global concatenated byte offsets** (rustc) — a single `u32` identifies both
+  file and offset across one address space, packable into 4 bytes. Very compact,
+  but requires a central concatenation and is less obvious.
+
+**Decision.** Represent a span as `Span { file: FileId, lo: BytePos, hi: BytePos }`
+— per-file byte offsets. Line/column is computed on demand from a per-file line
+table (binary search). Columns count Unicode scalar values.
+
+**Rationale.** Byte offsets keep `Span` small and `Copy` while mapping directly
+onto source slices; computing line/column lazily keeps the common path cheap. The
+explicit `FileId` makes spans self-describing and the model modular (each file is
+self-contained), which is clearer than a global address space. Crucially, `Span`'s
+fields are **private behind accessors**, so the representation can later adopt
+rustc-style packing without touching any caller.
+
+**Consequences.** A span is 12 bytes today rather than the 4-8 a packed scheme
+would use; packing is deferred until profiling justifies it (TECH_DEBT.md
+TD-0006). Column display width (CJK, tabs) is approximated as one column per
+character for now (TD-0008).
+
+---
+
+## ADR-0009 — Diagnostics separate construction, collection, and rendering
+
+**Status:** Accepted
+
+**Context.** Diagnostics are produced by every phase and are central to a
+compiler's usability. How they are built, gathered, and presented shapes both
+ergonomics and testability.
+
+**Decision.** Split the concern three ways:
+- **Construction** — an immutable-style fluent builder produces a structured
+  `Diagnostic` (severity, optional code, primary/secondary labeled spans, notes).
+- **Collection** — phases emit into a `DiagnosticHandler` that buffers diagnostics
+  and tracks error/warning counts.
+- **Rendering** — a standalone `render(&Diagnostic, &SourceMap) -> String`
+  produces human-readable, caret-annotated plain text.
+
+**Rationale.** Buffering (rather than printing at the emit site) gives the driver
+control over ordering and over whether to proceed after errors, and makes
+diagnostics assertable as data in tests. Keeping rendering separate lets the
+presentation evolve — color, JSON for IDEs, alternative formats — without touching
+the phases that emit diagnostics.
+
+**Consequences.** For now rendering is plain text with single-line underlines;
+color output (TD-0009) and richer multi-line/label-grouped rendering (TD-0007) are
+deferred. `aether-diagnostics` depends on `aether-source` (to resolve spans),
+consistent with the dependency rules in `ARCHITECTURE.md`.

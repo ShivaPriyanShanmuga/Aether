@@ -27,11 +27,11 @@ Goal: compile and run a trivial program end to end, e.g.
 `fn main() -> int { return 1 + 2; }` yielding the result `3`, via the AIR
 interpreter. This validates the whole architecture against a real program early.
 
-- **M1 — Source & diagnostics infrastructure** ⬜
-  `aether-source` (`SourceMap`, `Span`, line/column mapping) and
-  `aether-diagnostics` (structured diagnostics + rendering). Reused by every later
-  phase, so it comes first.
-- **M2 — Lexer** ⬜
+- **M1 — Source & diagnostics infrastructure** ✅
+  `aether-source` (`SourceMap`, `Span`, byte→line/column mapping) and
+  `aether-diagnostics` (structured diagnostics + caret rendering). Reused by every
+  later phase, so it came first.
+- **M2 — Lexer** ⬜ ← next
   `aether-lexer`: tokenize the minimal language into a spanned token stream, with
   lexical error recovery reported through diagnostics.
 - **M3 — AST & parser** ⬜
@@ -114,4 +114,4 @@ add today's code.
 
 ## Next milestone
 
-**M1 — Source & diagnostics infrastructure.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M2 — Lexer.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

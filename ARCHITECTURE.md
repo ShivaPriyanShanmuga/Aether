@@ -68,8 +68,8 @@ below therefore distinguishes what exists today from what is planned.
 | Crate | Responsibility | Status |
 | --- | --- | --- |
 | `aetherc` | Command-line driver; orchestrates phases | **exists** |
-| `aether-source` | Source files, `Span`, byte↔line/column mapping | planned (M1) |
-| `aether-diagnostics` | Diagnostics: errors/warnings, rendering | planned (M1) |
+| `aether-source` | Source files, `Span`, byte↔line/column mapping | **exists** |
+| `aether-diagnostics` | Diagnostics: errors/warnings, caret rendering | **exists** |
 | `aether-support` | Shared primitives: arenas, interners, data structures | planned (as needed) |
 | `aether-lexer` | Lexical analysis → token stream | planned (M2) |
 | `aether-ast` | AST node definitions | planned (M3) |
@@ -108,7 +108,11 @@ direction:
 - **Compilation Session / Context.** A single owner for per-compilation state:
   configuration, the source map, the diagnostics sink, and interners. Threaded
   explicitly through phases (no global mutable state), which keeps the compiler
-  testable and, eventually, safe to parallelize.
+  testable and, eventually, safe to parallelize. *Not yet materialized as a type:*
+  with only a `SourceMap` and a `DiagnosticHandler` today, the driver holds them
+  directly. The `Session` type is introduced once interners and multiple phases
+  make bundling worthwhile (TECH_DEBT.md TD-0010) — deferring it avoids a
+  premature abstraction.
 - **Diagnostics.** A structured diagnostics engine (severity, primary/secondary
   spans, notes, suggestions) with rendering separated from construction. Phases
   *emit* diagnostics into the session rather than printing directly.

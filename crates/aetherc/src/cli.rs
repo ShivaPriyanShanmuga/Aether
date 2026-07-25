@@ -9,6 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use aether_diagnostics::{Diagnostic, DiagnosticHandler, render};
+use aether_source::SourceMap;
+
 /// Program name used in help and diagnostic output.
 const PROG: &str = "aetherc";
 
@@ -121,28 +124,43 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 /// Handle the `compile` command.
 ///
 /// The full pipeline (lex → parse → lower → interpret) does not exist yet. This
-/// reads and validates the input path so the surrounding plumbing — argument
-/// handling, file I/O, exit codes — is exercised, then reports that compilation
-/// is unimplemented rather than pretending to succeed.
+/// loads the input into a real [`SourceMap`] and reports the current state
+/// through the real diagnostics pipeline — exercising the M1 infrastructure end
+/// to end — rather than pretending to compile.
 fn compile(input: &Path) -> ExitCode {
-    match std::fs::read_to_string(input) {
-        Ok(source) => {
-            eprintln!(
-                "{PROG}: note: read {} bytes from '{}'",
-                source.len(),
-                input.display()
-            );
-            eprintln!(
-                "{PROG}: error: the Aether compilation pipeline is not yet implemented \
-                 (see ROADMAP.md, Phase 1)"
-            );
-            ExitCode::from(exit::UNIMPLEMENTED)
-        }
+    let source = match std::fs::read_to_string(input) {
+        Ok(source) => source,
         Err(err) => {
             eprintln!("{PROG}: error: cannot read '{}': {err}", input.display());
-            ExitCode::from(exit::IO)
+            return ExitCode::from(exit::IO);
         }
+    };
+
+    // Load the source (exercises `aether-source`).
+    let mut sources = SourceMap::new();
+    let file = sources.add_file(input.display().to_string(), source);
+    let (name, bytes, lines) = {
+        let loaded = sources.file(file);
+        (
+            loaded.name().to_string(),
+            loaded.len_bytes(),
+            loaded.line_count(),
+        )
+    };
+
+    // Report through the diagnostics pipeline (exercises `aether-diagnostics`).
+    let mut handler = DiagnosticHandler::new();
+    handler.emit(
+        Diagnostic::error("the Aether compilation pipeline is not yet implemented")
+            .with_note(format!("loaded '{name}' ({bytes} bytes, {lines} lines)"))
+            .with_note("frontend stages (lexer, parser, ...) land in Phase 1; see ROADMAP.md"),
+    );
+
+    for diagnostic in handler.diagnostics() {
+        eprintln!("{}", render(diagnostic, &sources));
     }
+
+    ExitCode::from(exit::UNIMPLEMENTED)
 }
 
 /// The program's version string, e.g. `aetherc 0.0.0`.

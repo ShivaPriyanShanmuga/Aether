@@ -7,9 +7,13 @@ license.workspace = true
 authors.workspace = true
 description = "Command-line driver for the Aether compiler platform."
 
-# The default binary target (`src/main.rs`) is named after the package. Keeping
-# it dependency-free for now is deliberate; see TECH_DEBT.md for the planned
+# The default binary target (`src/main.rs`) is named after the package. CLI
+# argument parsing remains hand-rolled for now; see TECH_DEBT.md for the planned
 # migration to `clap` once the CLI surface grows.
+
+[dependencies]
+aether-source = { path = "../aether-source" }
+aether-diagnostics = { path = "../aether-diagnostics" }
 
 [lints]
 workspace = true

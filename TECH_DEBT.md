@@ -58,6 +58,50 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Revisit if we observe warnings escaping the clippy gate; consider a
   scoped deny via `[lints]` levels instead of a global flag.
 
+### TD-0006 — `Span` is 12 bytes; rustc-style packing deferred
+- **Severity:** low
+- **Context.** `Span { file: FileId, lo, hi }` uses three `u32`s (ADR-0008). rustc
+  packs file+range into 4 bytes (inline for small spans, interned otherwise).
+- **Impact.** More memory per token/AST/IR node than a packed scheme.
+- **Trigger.** If span storage shows up in profiling once real programs compile,
+  pack the representation. `Span`'s private fields make this a non-breaking change.
+
+### TD-0007 — Diagnostic renderer: single-line, ungrouped
+- **Severity:** low
+- **Context.** `render` underlines only the first line of a multi-line span and
+  renders one snippet block per label (labels on the same line are not grouped).
+- **Impact.** Multi-line spans and multi-label-per-line diagnostics look less
+  polished than rustc's.
+- **Trigger.** When diagnostics commonly span multiple lines (e.g. block/type
+  errors), add multi-line rendering and per-line label grouping.
+
+### TD-0008 — Columns count characters, not display width
+- **Severity:** low
+- **Context.** A column is one Unicode scalar value; double-width (CJK) and
+  zero-width glyphs, and tab display width, are not accounted for in the reported
+  column number.
+- **Impact.** Caret alignment can drift for such glyphs (tabs are handled in the
+  caret pad, but not in reported columns).
+- **Trigger.** Add Unicode-width-aware column computation if/when it matters for
+  users; consider the `unicode-width` crate.
+
+### TD-0009 — No colored diagnostic output
+- **Severity:** low
+- **Context.** `render` emits plain text so output is stable to snapshot-test and
+  safe to pipe.
+- **Impact.** Less scannable in a terminal than colored output.
+- **Trigger.** Add ANSI coloring gated on stderr being a TTY (and a `--color`
+  flag), keeping a plain-text path for tests.
+
+### TD-0010 — No `Session`/context type yet
+- **Severity:** low
+- **Context.** `ARCHITECTURE.md` envisions a `Session` owning per-compilation
+  state (source map, diagnostics, interners, config). Today the driver holds a
+  `SourceMap` and `DiagnosticHandler` directly.
+- **Impact.** None yet; introducing it now would be premature abstraction.
+- **Trigger.** Introduce `Session` when a third shared component (e.g. a string
+  interner) and multiple phases need to thread the same state — likely M2.
+
 ---
 
 ## Resolved items
