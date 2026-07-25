@@ -39,10 +39,11 @@ interpreter. This validates the whole architecture against a real program early.
   `aether-ast` (`Box`-owned spanned tree + pretty-printer) and `aether-parser`
   (recursive descent with Pratt expression parsing, error recovery) for the
   minimal grammar; `aetherc` gained a `--dump-ast` flag.
-- **M4 — AIR core & lowering** ⬜ ← next
-  `aether-air`: minimal typed SSA IR, builder, textual printer, and verifier;
-  lower the AST into AIR. Ratifies the AIR design (supersedes ADR-0006).
-- **M5 — AIR interpreter** ⬜
+- **M4 — AIR core & lowering** ✅
+  `aether-air` (typed, SSA, id/arena IR + textual printer + verifier) and
+  `aether-lower` (AST → AIR); ratified the AIR design (ADR-0013, supersedes
+  ADR-0006); `aetherc` gained a `--dump-air` flag.
+- **M5 — AIR interpreter** ⬜ ← next
   `aether-air-interp`: execute AIR and produce the program's result. **First
   runnable end-to-end pipeline** wired through `aetherc`.
 
@@ -116,4 +117,4 @@ add today's code.
 
 ## Next milestone
 
-**M4 — AIR core & lowering.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M5 — AIR interpreter.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

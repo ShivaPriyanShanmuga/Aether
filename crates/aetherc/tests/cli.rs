@@ -172,3 +172,48 @@ fn syntax_error_is_a_compile_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("expected `;`"), "stderr was:\n{stderr}");
 }
+
+#[test]
+fn dump_air_prints_ir_and_succeeds() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_air_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() -> int { return 1 + 2 * 3; }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg("--dump-air")
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("fn main() -> int {"),
+        "stdout was:\n{stdout}"
+    );
+    assert!(stdout.contains("ret %"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("mul %"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn missing_return_fails_verification() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_noret_{}.ae", std::process::id()));
+    // A function that never returns lowers to an unterminated block.
+    std::fs::write(&path, b"fn main() -> int { }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected COMPILE_ERROR exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no terminator"), "stderr was:\n{stderr}");
+}

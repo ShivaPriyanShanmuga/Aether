@@ -134,7 +134,8 @@ and grows one milestone at a time.
 
 ## ADR-0006 — AIR is a typed, SSA-based, textual, verifiable IR
 
-**Status:** Proposed *(direction only; to be ratified in the AIR milestone, M4)*
+**Status:** Superseded by [ADR-0013](#adr-0013--air-ratified-design) *(the direction
+recorded here was ratified and made concrete in M4)*
 
 **Context.** AIR is the reusable core of the platform; its shape strongly affects
 how easy analyses, optimizations, and backends are to write.
@@ -329,3 +330,51 @@ well-understood technique, not a speculative abstraction.
 **Consequences.** Unary prefix binding power sits above all binary operators, so
 `-a * b` parses as `(-a) * b`. New operators are added by extending the
 binding-power table and the prefix/infix dispatch.
+
+---
+
+## ADR-0013 — AIR ratified design
+
+**Status:** Accepted *(supersedes [ADR-0006](#adr-0006--air-is-a-typed-ssa-based-textual-verifiable-ir))*
+
+**Context.** ADR-0006 recorded AIR's *direction* (typed, SSA, CFG, textual,
+verifiable) but deferred the concrete design to its own milestone. M4 implements a
+minimal AIR and lowering, which requires ratifying the representation.
+
+**Decision.** AIR is a **typed, SSA-based IR over a CFG of basic blocks**, with an
+**id/arena representation**:
+
+- A `Function` owns flat arenas: instructions in a `Vec` addressed by `Value`, and
+  basic blocks in a `Vec` addressed by `Block`. A block is an ordered list of the
+  `Value`s it computes plus a `Terminator`.
+- **Every value is the result of an instruction**, constants included (`iconst`),
+  so operands are uniformly other `Value`s — no separate constant-operand concept.
+- Instructions carry a result **type** and a source **span** (for later
+  middle-end diagnostics and debug info).
+- AIR is **frontend-independent**: `aether-air` depends only on `aether-source`.
+  AST → AIR lowering is the separate `aether-lower` crate, and AIR defines its own
+  operator enums (lowering maps `ast` ops onto them).
+
+**Alternatives considered.**
+- **LLVM-style "instruction *is* the value"** vs **Cranelift-style separate
+  `Value`s with block parameters.** We took the middle path: instruction-as-value
+  (1:1) for simplicity now. Whether control-flow SSA uses **phi nodes** or
+  **block parameters** is deliberately left open until control flow lands (M6),
+  since neither is needed for straight-line code.
+- **A generic arena/interner crate (`aether-support`)** — not introduced; AIR's
+  three `Vec` arenas are simple and specific, so a generic abstraction would be
+  premature (TD-0010).
+
+**Rationale.** The id/arena model is the counterpart to the AST's `Box` tree
+(ADR-0011): it gives stable ids, cheap side tables, and cross-block references
+without threading lifetimes — exactly what analyses, optimizations, and in-place
+transformation need. Making constants instructions keeps the operand model
+uniform. Keeping AIR frontend-independent preserves the layering in
+`ARCHITECTURE.md`.
+
+**Consequences.** The current implementation is intentionally minimal: a single
+block per function, the instruction set needed for integer arithmetic
+(`iconst`, `add`/`sub`/`mul`/`div`, `neg`) and a `ret` terminator, and one type
+(`int`). A textual *parser* (full round-tripping), multi-block CFGs with
+phi/block-parameters, dominance-based verification, and richer types/instructions
+are future work tracked in `TECH_DEBT.md` and the roadmap.

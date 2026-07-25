@@ -50,6 +50,8 @@ enum Command {
         dump_tokens: bool,
         /// Whether `--dump-ast` was given: print the parsed AST.
         dump_ast: bool,
+        /// Whether `--dump-air` was given: print the lowered AIR.
+        dump_air: bool,
     },
 }
 
@@ -82,6 +84,7 @@ fn parse(args: &[String]) -> Result<Command, ParseError> {
     let mut input: Option<PathBuf> = None;
     let mut dump_tokens = false;
     let mut dump_ast = false;
+    let mut dump_air = false;
 
     for arg in args {
         match arg.as_str() {
@@ -89,6 +92,7 @@ fn parse(args: &[String]) -> Result<Command, ParseError> {
             "-V" | "--version" => return Ok(Command::Version),
             "--dump-tokens" => dump_tokens = true,
             "--dump-ast" => dump_ast = true,
+            "--dump-air" => dump_air = true,
             // Anything else starting with '-' (other than a bare "-") is an
             // option we do not recognize.
             other if other.starts_with('-') && other != "-" => {
@@ -108,6 +112,7 @@ fn parse(args: &[String]) -> Result<Command, ParseError> {
             input,
             dump_tokens,
             dump_ast,
+            dump_air,
         }),
         None => Err(ParseError::MissingInput),
     }
@@ -137,18 +142,19 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             input,
             dump_tokens,
             dump_ast,
-        } => compile(&input, dump_tokens, dump_ast),
+            dump_air,
+        } => compile(&input, dump_tokens, dump_ast, dump_air),
     }
 }
 
 /// Handle the `compile` command.
 ///
-/// Runs the phases that exist today (lexing, then parsing) over the input,
-/// reporting diagnostics through the real renderer. `--dump-tokens` prints the
-/// token stream; `--dump-ast` prints the parsed AST. AIR lowering onward does not
-/// exist yet, so a clean parse of a real program reports the pipeline as
-/// unimplemented rather than pretending to compile.
-fn compile(input: &Path, dump_tokens: bool, dump_ast: bool) -> ExitCode {
+/// Runs the phases that exist today — lex, parse, lower to AIR, verify — over the
+/// input, reporting diagnostics through the real renderer. Each `--dump-*` flag
+/// stops the pipeline after its phase and prints that phase's output. The
+/// interpreter does not exist yet, so a program that lowers and verifies cleanly
+/// reports the pipeline as unimplemented rather than pretending to run it.
+fn compile(input: &Path, dump_tokens: bool, dump_ast: bool, dump_air: bool) -> ExitCode {
     let source = match std::fs::read_to_string(input) {
         Ok(source) => source,
         Err(err) => {
@@ -161,7 +167,7 @@ fn compile(input: &Path, dump_tokens: bool, dump_ast: bool) -> ExitCode {
     let file = sources.add_file(input.display().to_string(), source);
     let mut handler = DiagnosticHandler::new();
 
-    // Lexical analysis (exercises `aether-lexer`).
+    // Lexical analysis.
     let LexResult {
         tokens,
         diagnostics,
@@ -171,44 +177,67 @@ fn compile(input: &Path, dump_tokens: bool, dump_ast: bool) -> ExitCode {
     }
     if dump_tokens {
         dump_tokens_to_stdout(&tokens, &sources);
+        return finish(&handler, &sources, dump_code(&handler));
+    }
+    if handler.has_errors() {
+        return finish(&handler, &sources, exit::COMPILE_ERROR);
     }
 
-    // Syntactic analysis (exercises `aether-parser`). Skipped when `--dump-tokens`
-    // asked to stop after lexing, and when lexing already failed.
-    if !dump_tokens && !handler.has_errors() {
-        let ParseResult {
-            program,
-            diagnostics,
-        } = aether_parser::parse(sources.file(file), &tokens);
-        for diagnostic in diagnostics {
-            handler.emit(diagnostic);
-        }
-        if dump_ast {
-            println!("{}", aether_ast::pretty::print(&program));
-        }
+    // Syntactic analysis.
+    let ParseResult {
+        program,
+        diagnostics,
+    } = aether_parser::parse(sources.file(file), &tokens);
+    for diagnostic in diagnostics {
+        handler.emit(diagnostic);
+    }
+    if dump_ast {
+        println!("{}", aether_ast::pretty::print(&program));
+        return finish(&handler, &sources, dump_code(&handler));
+    }
+    if handler.has_errors() {
+        return finish(&handler, &sources, exit::COMPILE_ERROR);
     }
 
-    // Decide the outcome, adding a "not yet implemented" note when a real program
-    // parsed cleanly but there is no later phase to hand it to.
-    let code = if handler.has_errors() {
-        exit::COMPILE_ERROR
-    } else if dump_tokens || dump_ast {
-        exit::SUCCESS
-    } else {
-        handler.emit(
-            Diagnostic::error(
-                "the Aether compilation pipeline is not yet implemented beyond parsing",
-            )
-            .with_note("AIR lowering and the interpreter land in M4/M5 (see ROADMAP.md)"),
-        );
-        exit::UNIMPLEMENTED
-    };
+    // Lowering to AIR, then structural verification.
+    let module = aether_lower::lower(&program);
+    for error in aether_air::verify(&module) {
+        handler.emit(Diagnostic::error(format!(
+            "AIR verification failed: {}",
+            error.message
+        )));
+    }
+    if dump_air {
+        println!("{}", aether_air::print(&module));
+        return finish(&handler, &sources, dump_code(&handler));
+    }
+    if handler.has_errors() {
+        return finish(&handler, &sources, exit::COMPILE_ERROR);
+    }
 
+    // Everything implemented has run; there is no interpreter yet.
+    handler.emit(
+        Diagnostic::error("the Aether compilation pipeline is not yet implemented beyond AIR")
+            .with_note("the AIR interpreter lands in M5 (see ROADMAP.md)"),
+    );
+    finish(&handler, &sources, exit::UNIMPLEMENTED)
+}
+
+/// Render all buffered diagnostics to stderr and return `code` as an exit code.
+fn finish(handler: &DiagnosticHandler, sources: &SourceMap, code: u8) -> ExitCode {
     for diagnostic in handler.diagnostics() {
-        eprintln!("{}", render(diagnostic, &sources));
+        eprintln!("{}", render(diagnostic, sources));
     }
-
     ExitCode::from(code)
+}
+
+/// The exit code for a `--dump-*` request: success unless errors were reported.
+fn dump_code(handler: &DiagnosticHandler) -> u8 {
+    if handler.has_errors() {
+        exit::COMPILE_ERROR
+    } else {
+        exit::SUCCESS
+    }
 }
 
 /// Print the token stream to stdout, one token per line as `KIND lo..hi "text"`.
@@ -248,6 +277,7 @@ fn help_string() -> String {
          Options:\n  \
          --dump-tokens    Lex the input, print the token stream, then exit\n  \
          --dump-ast       Parse the input, print the AST, then exit\n  \
+         --dump-air       Lower the input, print the AIR, then exit\n  \
          -h, --help       Print this help message and exit\n  \
          -V, --version    Print version information and exit",
         version = version_string(),
@@ -283,6 +313,7 @@ mod tests {
                 input: PathBuf::from("main.ae"),
                 dump_tokens: false,
                 dump_ast: false,
+                dump_air: false,
             })
         );
     }
@@ -295,6 +326,7 @@ mod tests {
                 input: PathBuf::from("main.ae"),
                 dump_tokens: true,
                 dump_ast: false,
+                dump_air: false,
             })
         );
     }
@@ -307,6 +339,20 @@ mod tests {
                 input: PathBuf::from("main.ae"),
                 dump_tokens: false,
                 dump_ast: true,
+                dump_air: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_dump_air_flag() {
+        assert_eq!(
+            parse(&args(&["--dump-air", "main.ae"])),
+            Ok(Command::Compile {
+                input: PathBuf::from("main.ae"),
+                dump_tokens: false,
+                dump_ast: false,
+                dump_air: true,
             })
         );
     }

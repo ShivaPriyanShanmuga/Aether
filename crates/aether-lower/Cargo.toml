@@ -1,0 +1,20 @@
+[package]
+name = "aether-lower"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Lowering from the Aether AST to AIR."
+
+[dependencies]
+aether-source = { path = "../aether-source" }
+aether-ast = { path = "../aether-ast" }
+aether-air = { path = "../aether-air" }
+
+[dev-dependencies]
+aether-lexer = { path = "../aether-lexer" }
+aether-parser = { path = "../aether-parser" }
+
+[lints]
+workspace = true

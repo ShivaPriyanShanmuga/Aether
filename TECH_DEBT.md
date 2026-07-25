@@ -174,6 +174,46 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add the `:` token and parameter parsing (with an AST `Param` type)
   during language expansion (M6).
 
+### TD-0019 — AIR is single-block; no phi / block parameters
+- **Severity:** medium
+- **Context.** AIR functions currently have one basic block (straight-line code).
+  The CFG shape exists, but multiple blocks, branch terminators, and SSA merges
+  (phi nodes or block parameters) are not implemented, and the phi-vs-block-params
+  choice is deliberately deferred (ADR-0013).
+- **Impact.** No control flow can be represented yet.
+- **Trigger.** Introduce with control-flow language features (M6). Decide
+  phi-vs-block-parameters then, and extend the verifier to dominance-based
+  def-before-use across blocks.
+
+### TD-0020 — Missing `return` surfaces as an AIR verification error
+- **Severity:** medium
+- **Context.** With no semantic analysis yet, a function that omits `return`
+  lowers to an unterminated block and is caught by the AIR verifier
+  ("block0 has no terminator") rather than by a friendly source-level diagnostic.
+- **Impact.** The message is IR-jargon, not a clear "missing return" error; and it
+  blurs the verifier's role (which should catch compiler bugs, not user errors).
+- **Trigger.** Semantic analysis (M8) should report missing/!-returning functions
+  with a proper diagnostic; verification then reverts to an internal-invariant
+  check (possibly debug-only).
+
+### TD-0021 — Literal value vs type range is unchecked in lowering
+- **Severity:** low
+- **Context.** `lower` casts the parser's `u64` literal to `i64` (`as i64`) and
+  `lower_type` maps any type name to `int`. Neither range (does the literal fit the
+  target type?) nor type-name validity (is `foo` a real type?) is checked.
+- **Impact.** An out-of-range literal wraps silently; an unknown return type is
+  silently treated as `int`.
+- **Trigger.** The type system (M8) validates type names and literal ranges.
+
+### TD-0022 — No AIR textual parser (printer only)
+- **Severity:** low
+- **Context.** AIR has a textual printer but no parser, so the textual form is not
+  yet round-trippable.
+- **Impact.** `FileCheck`-style tests that author AIR by hand are not possible;
+  golden tests print AIR built via the API instead.
+- **Trigger.** Add a textual AIR parser if/when hand-written IR tests or an
+  `aetherc` "assemble AIR" entry point are wanted.
+
 ---
 
 ## Resolved items

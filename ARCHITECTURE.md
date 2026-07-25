@@ -74,7 +74,8 @@ below therefore distinguishes what exists today from what is planned.
 | `aether-lexer` | Lexical analysis → token stream | **exists** |
 | `aether-ast` | AST node definitions (+ pretty-printer) | **exists** |
 | `aether-parser` | Recursive-descent parser → AST | **exists** |
-| `aether-air` | AIR data structures, builder, verifier, textual printer/parser | planned (M4) |
+| `aether-air` | AIR data structures, builder, verifier, textual printer | **exists** |
+| `aether-lower` | AST → AIR lowering | **exists** |
 | `aether-air-interp` | AIR interpreter (first execution target) | planned (M5) |
 | `aether-sema` | Name resolution and type checking | planned (Phase 2) |
 | `aether-analysis` | Analysis framework (CFG, dominators, dataflow, …) | planned (Phase 3) |
@@ -122,26 +123,32 @@ direction:
 
 ---
 
-## 5. AIR — direction
+## 5. AIR
 
-AIR is intended to be the reusable heart of the platform. Its detailed design is
-deferred to its own milestone (see the roadmap), but the intended direction —
-recorded so later work has a north star, **not yet ratified in detail** — is:
+AIR is the reusable heart of the platform. Its design was ratified in M4
+(ADR-0013, superseding the ADR-0006 direction) and a **minimal implementation
+exists**. The design is:
 
-- **Typed** — every value has an AIR type; the IR is checkable.
-- **SSA-based** with a control-flow graph of basic blocks — the mainstream shape
-  for a modern optimizing IR, which makes dataflow analyses and optimizations
-  natural to express.
-- **Textual round-trippable** — a human-readable form that can be printed and
-  re-parsed, which is invaluable for testing (golden/`FileCheck`-style tests) and
-  debugging.
-- **Verifiable** — a verifier checks structural invariants (well-formed CFG,
-  dominance of definitions over uses, type agreement) and runs in debug/test
-  builds.
-- **Target-independent** — no hardware assumptions leak into AIR; that is the
-  backend's concern.
+- **Typed** — every value has an AIR type; the IR is checkable. (Today the only
+  type is `int`.)
+- **SSA-based** with a control-flow graph of basic blocks. Every value is the
+  result of an instruction (constants included), so operands are uniformly other
+  values. (Today functions have a single block; multiple blocks, and thus phi
+  nodes or block parameters, arrive with control flow.)
+- **id/arena representation** — a `Function` owns flat arenas of instructions
+  (addressed by `Value`) and blocks (addressed by `Block`), the deliberate
+  counterpart to the AST's `Box` tree (ADR-0011). This gives stable ids, side
+  tables, and cross-block references without lifetime threading.
+- **Textual form** — a human-readable printer (used by `--dump-air` and golden
+  tests). A textual *parser* (full round-tripping) is future work.
+- **Verifiable** — a verifier checks structural invariants (every block
+  terminated, def-before-use, type agreement, return type match). Dominance-based
+  checking arrives with control flow.
+- **Target-independent** and **frontend-independent** — `aether-air` depends only
+  on `aether-source`; AST → AIR lowering lives in the separate `aether-lower`
+  crate.
 
-See [`DECISIONS.md`](DECISIONS.md) ADR-0006 for the status of this direction.
+See [`DECISIONS.md`](DECISIONS.md) ADR-0013 for the ratified design.
 
 ---
 

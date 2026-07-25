@@ -17,6 +17,8 @@ aether-diagnostics = { path = "../aether-diagnostics" }
 aether-lexer = { path = "../aether-lexer" }
 aether-ast = { path = "../aether-ast" }
 aether-parser = { path = "../aether-parser" }
+aether-air = { path = "../aether-air" }
+aether-lower = { path = "../aether-lower" }
 
 [lints]
 workspace = true
