@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-use aether_air::{BinaryOp, CmpOp, Function, InstData, Module, Terminator, UnaryOp, Value};
+use aether_air::{
+    BinaryOp, BranchTarget, CmpOp, Function, InstData, Module, Terminator, UnaryOp, Value, ValueDef,
+};
 use aether_source::Span;
 
 /// A runtime value produced by executing AIR.
@@ -94,39 +96,64 @@ pub fn run_function(function: &Function) -> Result<RunValue, RunError> {
     // The initial fill is a placeholder; every slot is written before it is read.
     let mut values = vec![RunValue::Int(0); function.value_count()];
     let mut current = function.entry();
+    // Arguments supplied by the edge taken into the current block; empty for the
+    // entry (functions have no parameters yet).
+    let mut incoming: Vec<RunValue> = Vec::new();
 
     loop {
         let block = function.block(current);
+
+        // Bind the block's parameters from the arguments the taken edge supplied.
+        for (&param, &arg) in block.params.iter().zip(&incoming) {
+            values[param.index()] = arg;
+        }
         for &value in &block.body {
             values[value.index()] = eval(function, &values, value)?;
         }
 
         match block
             .terminator
+            .as_ref()
             .expect("interpreter requires a verified (terminated) function")
         {
             Terminator::Ret(value) => return Ok(values[value.index()]),
-            Terminator::Br(target) => current = target,
+            Terminator::Br(target) => {
+                incoming = eval_args(target, &values);
+                current = target.block;
+            }
             Terminator::CondBr {
                 cond,
-                then_block,
-                else_block,
+                then_branch,
+                else_branch,
             } => {
-                current = if values[cond.index()].as_bool() {
-                    then_block
+                let taken = if values[cond.index()].as_bool() {
+                    then_branch
                 } else {
-                    else_block
+                    else_branch
                 };
+                incoming = eval_args(taken, &values);
+                current = taken.block;
             }
         }
     }
 }
 
+/// Read the argument values a branch passes to its target's parameters.
+fn eval_args(target: &BranchTarget, values: &[RunValue]) -> Vec<RunValue> {
+    target.args.iter().map(|&a| values[a.index()]).collect()
+}
+
 /// Evaluate the instruction that defines `value`, given the results computed so
 /// far.
 fn eval(function: &Function, values: &[RunValue], value: Value) -> Result<RunValue, RunError> {
-    let inst = function.inst(value);
-    match inst.data {
+    let data = match function.value_def(value) {
+        ValueDef::Inst(data) => *data,
+        // Only instruction results are evaluated; parameters are bound from edges.
+        ValueDef::Param { .. } => {
+            unreachable!("block parameters are bound on entry, not evaluated")
+        }
+    };
+    match data {
         InstData::IConst(n) => Ok(RunValue::Int(n)),
         InstData::BConst(b) => Ok(RunValue::Bool(b)),
         InstData::Unary { op, operand } => {
@@ -145,7 +172,9 @@ fn eval(function: &Function, values: &[RunValue], value: Value) -> Result<RunVal
                 BinaryOp::Mul => Ok(RunValue::Int(a.wrapping_mul(b))),
                 BinaryOp::Div => {
                     if b == 0 {
-                        Err(RunError::DivisionByZero { span: inst.span })
+                        Err(RunError::DivisionByZero {
+                            span: function.value_span(value),
+                        })
                     } else {
                         // `wrapping_div` also defines `i64::MIN / -1`.
                         Ok(RunValue::Int(a.wrapping_div(b)))
@@ -387,6 +416,67 @@ mod tests {
             ),
             Ok(42)
         );
+    }
+
+    #[test]
+    fn logical_and_or_truth_tables() {
+        assert_eq!(
+            run_val("fn main() -> bool { return true && true; }"),
+            Ok(RunValue::Bool(true))
+        );
+        assert_eq!(
+            run_val("fn main() -> bool { return true && false; }"),
+            Ok(RunValue::Bool(false))
+        );
+        assert_eq!(
+            run_val("fn main() -> bool { return false || true; }"),
+            Ok(RunValue::Bool(true))
+        );
+        assert_eq!(
+            run_val("fn main() -> bool { return false || false; }"),
+            Ok(RunValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn logical_operators_combine_comparisons() {
+        assert_eq!(
+            run_val("fn main() -> bool { let x = 5; return x > 0 && x < 10; }"),
+            Ok(RunValue::Bool(true))
+        );
+        assert_eq!(
+            run_val("fn main() -> bool { let x = 42; return x < 0 || x == 42; }"),
+            Ok(RunValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn and_short_circuits_past_division_by_zero() {
+        // `false && …` must not evaluate the right operand, so the `10 / 0` in it
+        // is never executed and raises no runtime error.
+        assert_eq!(
+            run_val("fn main() -> bool { return false && (10 / 0 == 0); }"),
+            Ok(RunValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn or_short_circuits_past_division_by_zero() {
+        // `true || …` likewise skips the right operand.
+        assert_eq!(
+            run_val("fn main() -> bool { return true || (10 / 0 == 0); }"),
+            Ok(RunValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn and_does_evaluate_the_right_operand_when_needed() {
+        // When the left operand is true, `&&` evaluates the right — and here that
+        // right operand *does* divide by zero, so it is a runtime error.
+        assert!(matches!(
+            run_val("fn main() -> bool { return true && (10 / 0 == 0); }"),
+            Err(RunError::DivisionByZero { .. })
+        ));
     }
 
     #[test]

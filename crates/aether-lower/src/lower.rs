@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use aether_air::{
-    BinaryOp, Block, CmpOp, Function, InstData, Module, Terminator, Type, UnaryOp, Value,
+    BinaryOp, Block, BranchTarget, CmpOp, Function, InstData, Module, Terminator, Type, UnaryOp,
+    Value,
 };
 use aether_ast::{self as ast, Expr, Program};
 use aether_diagnostics::Diagnostic;
@@ -109,12 +110,12 @@ impl FnLowerer<'_> {
                 // Lower the initializer *before* binding the name, so the name is
                 // not visible in its own initializer (use-before-def is an error).
                 // A later binding of the same name in the same scope rebinds it.
-                let value = self.lower_expr(self.current, &let_stmt.init);
+                let value = self.lower_expr(&let_stmt.init);
                 self.bind(let_stmt.name.name.clone(), value);
                 true
             }
             ast::Stmt::Return(ret) => {
-                let value = self.lower_expr(self.current, &ret.expr);
+                let value = self.lower_expr(&ret.expr);
                 self.function
                     .set_terminator(self.current, Terminator::Ret(value));
                 false // diverges
@@ -131,7 +132,7 @@ impl FnLowerer<'_> {
     /// join when both arms diverge (e.g. both `return`), which keeps the CFG free
     /// of unreachable blocks.
     fn lower_if(&mut self, s: &ast::IfStmt) -> bool {
-        let cond = self.lower_expr(self.current, &s.cond);
+        let cond = self.lower_expr(&s.cond);
         let pred = self.current;
 
         // Then branch, in its own scope.
@@ -167,8 +168,8 @@ impl FnLowerer<'_> {
                 pred,
                 Terminator::CondBr {
                     cond,
-                    then_block,
-                    else_block,
+                    then_branch: BranchTarget::new(then_block),
+                    else_branch: BranchTarget::new(else_block),
                 },
             );
             return false;
@@ -183,21 +184,22 @@ impl FnLowerer<'_> {
             pred,
             Terminator::CondBr {
                 cond,
-                then_block,
-                else_block: else_target,
+                then_branch: BranchTarget::new(then_block),
+                else_branch: BranchTarget::new(else_target),
             },
         );
 
-        // Each arm that falls through branches to the join.
+        // Each arm that falls through branches to the join. A statement `if`
+        // produces no value, so these edges pass no arguments.
         if then_falls {
             self.function
-                .set_terminator(then_exit, Terminator::Br(join));
+                .set_terminator(then_exit, Terminator::Br(BranchTarget::new(join)));
         }
         if let Some((_, else_falls, else_exit)) = else_info
             && else_falls
         {
             self.function
-                .set_terminator(else_exit, Terminator::Br(join));
+                .set_terminator(else_exit, Terminator::Br(BranchTarget::new(join)));
         }
 
         self.current = join;
@@ -238,47 +240,55 @@ impl FnLowerer<'_> {
             .find_map(|scope| scope.get(name).copied())
     }
 
-    /// Lower an expression, appending instructions to `block` and returning the
-    /// [`Value`] holding its result.
-    fn lower_expr(&mut self, block: Block, expr: &Expr) -> Value {
+    /// Lower an expression into the current block, returning the [`Value`] holding
+    /// its result. Most expressions are straight-line, but `&&`/`||` introduce
+    /// branches and advance `self.current` to their merge block.
+    fn lower_expr(&mut self, expr: &Expr) -> Value {
         match expr {
-            Expr::IntLit { value, span } => {
-                self.function
-                    .push_inst(block, InstData::IConst(*value as i64), Type::Int, *span)
-            }
+            Expr::IntLit { value, span } => self.function.push_inst(
+                self.current,
+                InstData::IConst(*value as i64),
+                Type::Int,
+                *span,
+            ),
             Expr::BoolLit { value, span } => {
                 self.function
-                    .push_inst(block, InstData::BConst(*value), Type::Bool, *span)
+                    .push_inst(self.current, InstData::BConst(*value), Type::Bool, *span)
             }
             Expr::Unary { op, operand, span } => {
-                let operand = self.lower_expr(block, operand);
+                let operand = self.lower_expr(operand);
                 // The operator determines the result type: `-` on int, `!` on bool.
                 let (op, ty) = match op {
                     ast::UnOp::Neg => (UnaryOp::Neg, Type::Int),
                     ast::UnOp::Not => (UnaryOp::Not, Type::Bool),
                 };
                 self.function
-                    .push_inst(block, InstData::Unary { op, operand }, ty, *span)
+                    .push_inst(self.current, InstData::Unary { op, operand }, ty, *span)
             }
-            Expr::Binary { op, lhs, rhs, span } => {
-                let lhs = self.lower_expr(block, lhs);
-                let rhs = self.lower_expr(block, rhs);
-                // Arithmetic operators produce an int; comparisons produce a bool.
-                match lower_binop(*op) {
-                    LoweredBinOp::Arith(op) => self.function.push_inst(
-                        block,
-                        InstData::Binary { op, lhs, rhs },
-                        Type::Int,
-                        *span,
-                    ),
-                    LoweredBinOp::Cmp(op) => self.function.push_inst(
-                        block,
-                        InstData::ICmp { op, lhs, rhs },
-                        Type::Bool,
-                        *span,
-                    ),
+            Expr::Binary { op, lhs, rhs, span } => match op {
+                // Logical operators short-circuit, so they lower to branches.
+                ast::BinOp::And => self.lower_short_circuit(true, lhs, rhs, *span),
+                ast::BinOp::Or => self.lower_short_circuit(false, lhs, rhs, *span),
+                _ => {
+                    let lhs = self.lower_expr(lhs);
+                    let rhs = self.lower_expr(rhs);
+                    // Arithmetic operators produce an int; comparisons a bool.
+                    match lower_binop(*op) {
+                        LoweredBinOp::Arith(op) => self.function.push_inst(
+                            self.current,
+                            InstData::Binary { op, lhs, rhs },
+                            Type::Int,
+                            *span,
+                        ),
+                        LoweredBinOp::Cmp(op) => self.function.push_inst(
+                            self.current,
+                            InstData::ICmp { op, lhs, rhs },
+                            Type::Bool,
+                            *span,
+                        ),
+                    }
                 }
-            }
+            },
             Expr::Name { name, span } => {
                 if let Some(value) = self.resolve(name) {
                     value
@@ -287,16 +297,72 @@ impl FnLowerer<'_> {
                     // Poison value so lowering stays total; the diagnostic stops
                     // the program from being run.
                     self.function
-                        .push_inst(block, InstData::IConst(0), Type::Int, *span)
+                        .push_inst(self.current, InstData::IConst(0), Type::Int, *span)
                 }
             }
             // Poison nodes never reach lowering (it runs only after a clean parse);
             // emit a constant so lowering stays total.
             Expr::Error { span } => {
                 self.function
-                    .push_inst(block, InstData::IConst(0), Type::Int, *span)
+                    .push_inst(self.current, InstData::IConst(0), Type::Int, *span)
             }
         }
+    }
+
+    /// Lower a short-circuiting `&&` (`is_and = true`) or `||` (`is_and = false`).
+    ///
+    /// The left operand is evaluated first; the right is evaluated only when it can
+    /// still change the result. The two paths reconverge at a merge block whose
+    /// boolean parameter carries the operator's value (an SSA merge, ADR-0017):
+    ///
+    /// ```text
+    ///     %l = <lhs> ; %s = bconst <short>       // in the current block
+    ///     condbr %l, <eval or short edge>, ...
+    /// rhs:
+    ///     %r = <rhs> ; br merge(%r)
+    /// merge(%v: bool):                            // %v is the result
+    /// ```
+    fn lower_short_circuit(&mut self, is_and: bool, lhs: &Expr, rhs: &Expr, span: Span) -> Value {
+        let lhs_val = self.lower_expr(lhs);
+        let pred = self.current;
+
+        let rhs_block = self.function.append_block();
+        let merge = self.function.append_block();
+        let param = self.function.append_block_param(merge, Type::Bool, span);
+
+        // The short-circuit constant: `&&` is false when lhs is false; `||` is
+        // true when lhs is true. Defined in `pred`, which dominates the merge.
+        let short = self
+            .function
+            .push_inst(pred, InstData::BConst(!is_and), Type::Bool, span);
+        let short_edge = BranchTarget::with_args(merge, vec![short]);
+        let eval_edge = BranchTarget::new(rhs_block);
+        // `&&`: lhs true → evaluate rhs, else short-circuit. `||`: the reverse.
+        let (then_branch, else_branch) = if is_and {
+            (eval_edge, short_edge)
+        } else {
+            (short_edge, eval_edge)
+        };
+        self.function.set_terminator(
+            pred,
+            Terminator::CondBr {
+                cond: lhs_val,
+                then_branch,
+                else_branch,
+            },
+        );
+
+        // The rhs block evaluates the right operand and carries it to the merge.
+        self.current = rhs_block;
+        let rhs_val = self.lower_expr(rhs);
+        let rhs_exit = self.current;
+        self.function.set_terminator(
+            rhs_exit,
+            Terminator::Br(BranchTarget::with_args(merge, vec![rhs_val])),
+        );
+
+        self.current = merge;
+        param
     }
 
     fn error(&mut self, span: Span, message: String) {
@@ -326,6 +392,10 @@ fn lower_binop(op: ast::BinOp) -> LoweredBinOp {
         ast::BinOp::Le => LoweredBinOp::Cmp(CmpOp::Le),
         ast::BinOp::Gt => LoweredBinOp::Cmp(CmpOp::Gt),
         ast::BinOp::Ge => LoweredBinOp::Cmp(CmpOp::Ge),
+        // Short-circuit operators branch; they are intercepted before this point.
+        ast::BinOp::And | ast::BinOp::Or => {
+            unreachable!("`&&`/`||` are lowered by lower_short_circuit")
+        }
     }
 }
 
@@ -524,6 +594,45 @@ block2:
         let (_air, diags) =
             lower_checked("fn main() -> int { let x = 7; if true { return x; } return 0; }");
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    }
+
+    #[test]
+    fn lowers_logical_and_to_a_short_circuit_merge() {
+        // `a && b` branches: if `a` is false, skip `b` and merge `false`.
+        assert_eq!(
+            lower_str("fn main() -> bool { let a = 1 < 2; let b = 3 < 4; return a && b; }"),
+            "\
+fn main() -> bool {
+block0:
+    %0 = iconst 1
+    %1 = iconst 2
+    %2 = icmp lt %0, %1
+    %3 = iconst 3
+    %4 = iconst 4
+    %5 = icmp lt %3, %4
+    %7 = bconst false
+    condbr %2, block1, block2(%7)
+block1:
+    br block2(%5)
+block2(%6: bool):
+    ret %6
+}"
+        );
+    }
+
+    #[test]
+    fn lowers_logical_or_short_circuits_on_true() {
+        // `a || b`: if `a` is true, merge `true` and skip `b`.
+        let air = lower_str("fn main() -> bool { let a = 1 < 2; let b = 3 < 4; return a || b; }");
+        assert!(
+            air.contains("bconst true"),
+            "or short-circuits true:\n{air}"
+        );
+        // condbr's true edge carries the short-circuit constant to the merge.
+        assert!(
+            air.contains("condbr %2, block2("),
+            "true edge to merge:\n{air}"
+        );
     }
 
     #[test]

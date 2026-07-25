@@ -624,3 +624,46 @@ verify, and execute (the interpreter now follows the CFG). Resolves TD-0023
 block-parameter merges (2c). If-expressions and `&&`/`||` remain deferred
 (TD-0029). A function that does not `return` on all paths still surfaces as a
 verifier "missing terminator" (TD-0020) until semantic analysis (M8).
+
+---
+
+## ADR-0020 — Block parameters implemented; short-circuit `&&`/`||`
+
+**Status:** Accepted *(implements [ADR-0017](#adr-0017--ssa-control-flow-merges-use-block-parameters-not-phi-nodes))*
+
+**Context.** ADR-0017 chose **block parameters** over phi nodes for SSA merges but
+deferred the implementation. M6 slice 2c implements them, exercised by
+short-circuiting `&&`/`||` — the minimal source construct that yields a value
+merged from two paths.
+
+**Decision.**
+- **Unified value table.** `aether-air` moves from "`Value` = index into an
+  instruction arena" to a table where each `Value` is a `ValueData { ty, span, def }`
+  and `def` is either `ValueDef::Inst(InstData)` (an instruction result) or
+  `ValueDef::Param { block, index }` (a block parameter). Because each instruction
+  defines exactly one value, the instruction's data is stored **inline** in the
+  `Inst` variant rather than in a separate arena — simpler than Cranelift's split,
+  which exists to support multi-result instructions AIR does not have. This
+  supersedes the 1:1 value↔instruction assumption noted in ADR-0013.
+- **Branches carry arguments.** `Terminator::Br`/`CondBr` hold a
+  `BranchTarget { block, args }` per edge; a predecessor supplies one argument per
+  target parameter. `Terminator` is consequently no longer `Copy`.
+- **Verifier.** A block's parameters are definitions at that block (available to it
+  and the blocks it dominates); each branch's argument count and types must match
+  the target's parameters. The dominance-by-availability check treats parameters
+  uniformly — the single rule with no phi carve-out that ADR-0017 promised.
+- **Interpreter.** On entering a block, its parameters are bound from the taken
+  edge's arguments before the body runs.
+- **`&&`/`||`.** Lowered to short-circuiting control flow: the right operand is
+  evaluated only when it can change the result, and the paths merge at a block
+  whose boolean parameter is the operator's value. No interpreter-specific
+  short-circuit logic is needed — the CFG expresses it.
+
+**Consequences.** SSA merges work end to end (TD-0019 resolved). `&&`/`||` combine
+conditions and correctly skip a side-effecting right operand — e.g.
+`false && (10 / 0 == 0)` returns `false` with no division-by-zero error (tested).
+The value table stores instruction data inline, keeping the common accessors
+(`value_type`, `value_def`, `value_span`) cheap. The remaining control-flow
+feature, **if-expressions**, is still deferred (it needs block-with-tail-expression
+language design; TD-0029). Overflow and type-checking provisions (ADR-0015/0018)
+are unchanged.

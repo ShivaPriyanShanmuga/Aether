@@ -131,13 +131,12 @@ exists**. The design is:
 
 - **Typed** — every value has an AIR type; the IR is checkable. (Today the types
   are `int` and `bool`; comparisons produce `bool`.)
-- **SSA-based** with a control-flow graph of basic blocks. Every value is the
-  result of an instruction (constants included), so operands are uniformly other
-  values. Functions can have multiple blocks connected by `br`/`condbr`
-  terminators (M6 slice 2b). SSA **merges** are not yet implemented; the
-  representation is decided — **block parameters**, not phi nodes (ADR-0017) — and
-  lands in M6 slice 2c, at which point a value becomes "an instruction result *or*
-  a block parameter".
+- **SSA-based** with a control-flow graph of basic blocks. A value is either an
+  instruction result (constants included) or a **block parameter** — AIR's SSA
+  merge mechanism (block parameters, not phi nodes; ADR-0017/0020). Functions have
+  multiple blocks connected by `br`/`condbr` terminators, each edge carrying
+  arguments for its target's parameters. Values live in a unified table addressed
+  by `Value`.
 - **id/arena representation** — a `Function` owns flat arenas of instructions
   (addressed by `Value`) and blocks (addressed by `Block`), the deliberate
   counterpart to the AST's `Box` tree (ADR-0011). This gives stable ids, side

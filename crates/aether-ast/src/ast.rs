@@ -235,6 +235,10 @@ pub enum BinOp {
     Gt,
     /// Greater-than-or-equal, `>=`.
     Ge,
+    /// Short-circuiting logical and, `&&`.
+    And,
+    /// Short-circuiting logical or, `||`.
+    Or,
 }
 
 impl BinOp {
@@ -252,6 +256,8 @@ impl BinOp {
             BinOp::Le => "<=",
             BinOp::Gt => ">",
             BinOp::Ge => ">=",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
         }
     }
 
@@ -335,6 +341,8 @@ mod tests {
         assert_eq!(BinOp::Le.symbol(), "<=");
         assert_eq!(BinOp::Gt.symbol(), ">");
         assert_eq!(BinOp::Ge.symbol(), ">=");
+        assert_eq!(BinOp::And.symbol(), "&&");
+        assert_eq!(BinOp::Or.symbol(), "||");
         assert_eq!(UnOp::Neg.symbol(), "-");
         assert_eq!(UnOp::Not.symbol(), "!");
     }

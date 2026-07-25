@@ -29,23 +29,24 @@ pub fn parse(file: &SourceFile, tokens: &[Token]) -> ParseResult {
 
 /// Right binding power of the unary prefix operators (`-`, `!`). Higher than any
 /// binary operator, so `-a * b` parses as `(-a) * b` and `!a == b` as `(!a) == b`.
-const UNARY_BINDING_POWER: u8 = 11;
+const UNARY_BINDING_POWER: u8 = 15;
 
 /// The `(left, right)` binding powers of an infix operator. `right > left` makes
 /// the operator left-associative.
 ///
-/// Precedence, loosest to tightest: equality, then relational, then additive,
-/// then multiplicative (unary prefix binds tighter than all of them). Comparison
-/// operators are left-associative for now; chained comparisons like `a < b < c`
-/// parse but are rejected later by AIR type checking (a nicer non-associativity
-/// error awaits the type system). Short-circuiting `&&`/`||` will slot in below
-/// equality when control flow lands (slice 2b).
+/// Precedence, loosest to tightest: logical-or, logical-and, equality,
+/// relational, additive, multiplicative (unary prefix binds tighter than all of
+/// them). Comparison operators are left-associative for now; chained comparisons
+/// like `a < b < c` parse but are rejected later by AIR type checking (a nicer
+/// non-associativity error awaits the type system).
 fn infix_binding_power(op: BinOp) -> (u8, u8) {
     match op {
-        BinOp::Eq | BinOp::Ne => (1, 2),
-        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => (3, 4),
-        BinOp::Add | BinOp::Sub => (5, 6),
-        BinOp::Mul | BinOp::Div => (7, 8),
+        BinOp::Or => (1, 2),
+        BinOp::And => (3, 4),
+        BinOp::Eq | BinOp::Ne => (5, 6),
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => (7, 8),
+        BinOp::Add | BinOp::Sub => (9, 10),
+        BinOp::Mul | BinOp::Div => (11, 12),
     }
 }
 
@@ -311,6 +312,8 @@ impl<'a> Parser<'a> {
                 TokenKind::LtEq => BinOp::Le,
                 TokenKind::Gt => BinOp::Gt,
                 TokenKind::GtEq => BinOp::Ge,
+                TokenKind::AmpAmp => BinOp::And,
+                TokenKind::PipePipe => BinOp::Or,
                 _ => break,
             };
             let (l_bp, r_bp) = infix_binding_power(op);
@@ -723,6 +726,46 @@ Program
         let first_else = tree.find("Else").unwrap();
         let second_if = tree.rfind("If").unwrap();
         assert!(second_if > first_else, "nested if not under else:\n{tree}");
+    }
+
+    #[test]
+    fn logical_operator_precedence() {
+        // a || b && c  =>  a || (b && c)   (&& binds tighter than ||)
+        let tree = parse_ok("fn f() -> bool { return a || b && c; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"f\" -> \"bool\"
+    Block
+      Return
+        Binary ||
+          Name \"a\"
+          Binary &&
+            Name \"b\"
+            Name \"c\""
+        );
+    }
+
+    #[test]
+    fn logical_and_binds_looser_than_comparison() {
+        // a < b && c == d  =>  (a < b) && (c == d)
+        let tree = parse_ok("fn f() -> bool { return a < b && c == d; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"f\" -> \"bool\"
+    Block
+      Return
+        Binary &&
+          Binary <
+            Name \"a\"
+            Name \"b\"
+          Binary ==
+            Name \"c\"
+            Name \"d\""
+        );
     }
 
     #[test]

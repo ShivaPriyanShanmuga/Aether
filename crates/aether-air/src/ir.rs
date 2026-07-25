@@ -110,9 +110,11 @@ impl CmpOp {
     }
 }
 
-/// A reference to an SSA value: the result of an instruction.
+/// A reference to an SSA value.
 ///
-/// A `Value` is an index into its [`Function`]'s instruction arena.
+/// A `Value` is an index into its [`Function`]'s value table. Every value is
+/// defined either by an instruction (its result) or as a block parameter — see
+/// [`ValueDef`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Value(u32);
 
@@ -178,32 +180,75 @@ pub enum InstData {
     },
 }
 
-/// An instruction: its operation, result type, and originating source span.
-#[derive(Clone, Copy, Debug)]
-pub struct Inst {
-    /// The operation performed.
-    pub data: InstData,
-    /// The type of the value this instruction produces.
-    pub ty: Type,
-    /// The source location this instruction was lowered from.
-    pub span: Span,
+/// How a [`Value`] is defined.
+///
+/// Every value is either the result of an instruction or a parameter of a block
+/// (an SSA merge point — see ADR-0017). Because each instruction defines exactly
+/// one value, the instruction's data is stored inline here rather than in a
+/// separate arena.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ValueDef {
+    /// The result of an instruction with this data.
+    Inst(InstData),
+    /// The `index`-th parameter of `block`, bound from the arguments a
+    /// predecessor supplies on the edge it takes into `block`.
+    Param {
+        /// The block this parameter belongs to.
+        block: Block,
+        /// The parameter's position in the block's parameter list.
+        index: usize,
+    },
+}
+
+/// A value's definition, its type, and the source span it came from.
+#[derive(Clone, Debug)]
+struct ValueData {
+    def: ValueDef,
+    ty: Type,
+    span: Span,
+}
+
+/// A branch edge: the target block and the arguments passed to its parameters.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BranchTarget {
+    /// The destination block.
+    pub block: Block,
+    /// The values supplied to the destination's parameters, in order.
+    pub args: Vec<Value>,
+}
+
+impl BranchTarget {
+    /// A branch to `block` passing no arguments.
+    #[must_use]
+    pub fn new(block: Block) -> BranchTarget {
+        BranchTarget {
+            block,
+            args: Vec::new(),
+        }
+    }
+
+    /// A branch to `block` passing `args`.
+    #[must_use]
+    pub fn with_args(block: Block, args: Vec<Value>) -> BranchTarget {
+        BranchTarget { block, args }
+    }
 }
 
 /// How a basic block ends and transfers control.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Terminator {
     /// Return a value from the function.
     Ret(Value),
     /// Unconditionally branch to another block.
-    Br(Block),
-    /// Branch to `then_block` if `cond` (a `bool`) is true, else `else_block`.
+    Br(BranchTarget),
+    /// Branch to `then_branch` if `cond` (a `bool`) is true, else `else_branch`.
     CondBr {
         /// The boolean condition selecting the successor.
         cond: Value,
-        /// The successor taken when `cond` is true.
-        then_block: Block,
-        /// The successor taken when `cond` is false.
-        else_block: Block,
+        /// The edge taken when `cond` is true.
+        then_branch: BranchTarget,
+        /// The edge taken when `cond` is false.
+        else_branch: BranchTarget,
     },
 }
 
@@ -213,20 +258,23 @@ impl Terminator {
     pub fn successors(&self) -> Vec<Block> {
         match self {
             Terminator::Ret(_) => Vec::new(),
-            Terminator::Br(target) => vec![*target],
+            Terminator::Br(target) => vec![target.block],
             Terminator::CondBr {
-                then_block,
-                else_block,
+                then_branch,
+                else_branch,
                 ..
-            } => vec![*then_block, *else_block],
+            } => vec![then_branch.block, else_branch.block],
         }
     }
 }
 
-/// The contents of a basic block: an ordered list of the values it computes,
-/// followed by a terminator.
+/// The contents of a basic block: its parameters, the values it computes, and a
+/// terminator.
 #[derive(Clone, Debug, Default)]
 pub struct BlockData {
+    /// The block's parameters (SSA merge points), in order. Empty for the entry
+    /// block and for blocks with a single predecessor that need no merge.
+    pub params: Vec<Value>,
     /// The values computed in this block, in execution order.
     pub body: Vec<Value>,
     /// How the block ends. `None` only while the block is being built; a
@@ -241,8 +289,9 @@ pub struct Function {
     pub name: String,
     /// The function's return type.
     pub return_type: Type,
-    /// Instruction arena, addressed by [`Value`].
-    insts: Vec<Inst>,
+    /// Value table, addressed by [`Value`]: instruction results and block
+    /// parameters alike.
+    values: Vec<ValueData>,
     /// Basic-block arena, addressed by [`Block`].
     blocks: Vec<BlockData>,
     /// The entry block, always present.
@@ -257,7 +306,7 @@ impl Function {
         Function {
             name: name.into(),
             return_type,
-            insts: Vec::new(),
+            values: Vec::new(),
             blocks: vec![BlockData::default()],
             entry: Block::from_index(0),
         }
@@ -276,11 +325,33 @@ impl Function {
         id
     }
 
+    /// Append a parameter of type `ty` to `block`, returning the [`Value`] it
+    /// defines. Predecessors supply a matching argument on each edge into `block`.
+    pub fn append_block_param(&mut self, block: Block, ty: Type, span: Span) -> Value {
+        let index = self.blocks[block.index()].params.len();
+        let value = self.new_value(ValueData {
+            def: ValueDef::Param { block, index },
+            ty,
+            span,
+        });
+        self.blocks[block.index()].params.push(value);
+        value
+    }
+
     /// Append an instruction to `block`, returning the [`Value`] it defines.
     pub fn push_inst(&mut self, block: Block, data: InstData, ty: Type, span: Span) -> Value {
-        let value = Value::from_index(self.insts.len());
-        self.insts.push(Inst { data, ty, span });
+        let value = self.new_value(ValueData {
+            def: ValueDef::Inst(data),
+            ty,
+            span,
+        });
         self.blocks[block.index()].body.push(value);
+        value
+    }
+
+    fn new_value(&mut self, data: ValueData) -> Value {
+        let value = Value::from_index(self.values.len());
+        self.values.push(data);
         value
     }
 
@@ -289,22 +360,29 @@ impl Function {
         self.blocks[block.index()].terminator = Some(terminator);
     }
 
-    /// The instruction that defines `value`.
+    /// How `value` is defined.
     #[must_use]
-    pub fn inst(&self, value: Value) -> &Inst {
-        &self.insts[value.index()]
+    pub fn value_def(&self, value: Value) -> &ValueDef {
+        &self.values[value.index()].def
     }
 
     /// The type of `value`.
     #[must_use]
     pub fn value_type(&self, value: Value) -> Type {
-        self.insts[value.index()].ty
+        self.values[value.index()].ty
     }
 
-    /// The number of values (instructions) defined in this function.
+    /// The source span `value` was lowered from.
+    #[must_use]
+    pub fn value_span(&self, value: Value) -> Span {
+        self.values[value.index()].span
+    }
+
+    /// The number of values (instruction results and block parameters) defined in
+    /// this function.
     #[must_use]
     pub fn value_count(&self) -> usize {
-        self.insts.len()
+        self.values.len()
     }
 
     /// The contents of `block`.
@@ -381,6 +459,37 @@ mod tests {
         assert_eq!(f.value_type(sum), Type::Int);
         assert_eq!(f.block(entry).body, vec![a, b, sum]);
         assert_eq!(f.block(entry).terminator, Some(Terminator::Ret(sum)));
+    }
+
+    #[test]
+    fn block_parameters_are_values() {
+        let span = dummy_span();
+        let mut f = Function::new("f", Type::Int);
+        let entry = f.entry();
+        let join = f.append_block();
+        let p = f.append_block_param(join, Type::Int, span);
+        let c = f.push_inst(entry, InstData::IConst(1), Type::Int, span);
+        f.set_terminator(
+            entry,
+            Terminator::Br(BranchTarget::with_args(join, vec![c])),
+        );
+        f.set_terminator(join, Terminator::Ret(p));
+
+        // The parameter is a value defined as the 0th param of `join`.
+        assert_eq!(f.value_type(p), Type::Int);
+        assert_eq!(
+            f.value_def(p),
+            &ValueDef::Param {
+                block: join,
+                index: 0
+            }
+        );
+        assert_eq!(f.block(join).params, vec![p]);
+        // The predecessor passes `c` as the join's argument.
+        assert_eq!(
+            f.block(entry).terminator,
+            Some(Terminator::Br(BranchTarget::with_args(join, vec![c])))
+        );
     }
 
     #[test]

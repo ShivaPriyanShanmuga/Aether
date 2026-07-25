@@ -128,6 +128,15 @@ impl<'src> Lexer<'src> {
             '<' => self.one_or_two('=', TokenKind::LtEq, TokenKind::Lt),
             '>' => self.one_or_two('=', TokenKind::GtEq, TokenKind::Gt),
             '-' => self.one_or_two('>', TokenKind::Arrow, TokenKind::Minus),
+            // `&`/`|` exist only doubled; a lone one is an error (no bitwise ops).
+            '&' if self.peek() == Some('&') => {
+                self.bump();
+                TokenKind::AmpAmp
+            }
+            '|' if self.peek() == Some('|') => {
+                self.bump();
+                TokenKind::PipePipe
+            }
             _ => {
                 let span = self.span(start, self.pos);
                 self.diagnostics.push(
@@ -405,6 +414,20 @@ mod tests {
             kinds("ifx elsewhere"),
             vec![TokenKind::Ident, TokenKind::Ident]
         );
+    }
+
+    #[test]
+    fn logical_and_or_operators() {
+        assert_eq!(kinds("&& ||"), vec![TokenKind::AmpAmp, TokenKind::PipePipe]);
+    }
+
+    #[test]
+    fn lone_ampersand_or_pipe_is_an_error() {
+        // A single `&` or `|` is not a valid token (no bitwise operators).
+        let (_pairs, diags) = lex("a & b");
+        assert_eq!(diags.len(), 1);
+        let (_pairs, diags) = lex("a | b");
+        assert_eq!(diags.len(), 1);
     }
 
     #[test]

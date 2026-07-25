@@ -135,6 +135,28 @@ fn runs_a_branching_program() {
 }
 
 #[test]
+fn runs_a_program_with_logical_operators() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_logic_{}.ae", std::process::id()));
+    // `x > 0 && x < 10` is true for x = 5; the `&&` merges via a block parameter.
+    std::fs::write(
+        &path,
+        b"fn main() -> int { let x = 5; if x > 0 && x < 10 { return 1; } return 0; }\n",
+    )
+    .expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "1", "stdout was:\n{stdout}");
+}
+
+#[test]
 fn unknown_variable_is_a_compile_error() {
     let mut path: PathBuf = std::env::temp_dir();
     path.push(format!("aetherc_it_unknown_{}.ae", std::process::id()));

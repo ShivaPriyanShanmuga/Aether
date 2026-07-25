@@ -72,11 +72,13 @@ Grow the language and give the frontend real semantic teeth.
        multi-block AIR with `br`/`condbr`, dominance-based verification, scoped
        environments, and CFG execution in the interpreter (ADR-0019). No SSA
        merges yet (statement `if` + immutable `let` needs none).
-     - **2c — merges: if-expressions & `&&`/`||`** ⬜ ← next — the `Value`-model
-       refactor and block parameters (implementing ADR-0017), the expression form
-       of `if`, and short-circuit `&&`/`||`.
-  3. **Functions: parameters & calls** ⬜ — adds a `:` token, parameters, a call
-     instruction, and interpreter call frames.
+     - **2c — SSA merges & short-circuit `&&`/`||`** ✅ — the `Value`-model
+       refactor to a unified value table and block parameters (implementing
+       ADR-0017/0020), branch edge-arguments, and short-circuit `&&`/`||`. The
+       **expression form of `if`** remains deferred (it needs block-tail-expression
+       language design; TD-0029) and can be picked up as a later slice.
+  3. **Functions: parameters & calls** ⬜ ← next — adds a `:` token, parameters, a
+     call instruction, and interpreter call frames.
 - **M7 — Name resolution & scopes** ⬜
   Resolve identifiers to bindings; scope and shadowing rules.
 - **M8 — Type system & checking** ⬜
@@ -138,6 +140,6 @@ add today's code.
 
 ## Next milestone
 
-**M6 — Language expansion**, next slice: **2c — SSA merges** (if-expressions and
-`&&`/`||`), implementing the block parameters decided in ADR-0017. See
-[`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M6 — Language expansion**, next slice: **3 — functions: parameters & calls**.
+Control-flow statement forms and short-circuit `&&`/`||` are done; if-expressions
+remain an optional deferred slice. See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

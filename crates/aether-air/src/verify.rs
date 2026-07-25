@@ -15,15 +15,18 @@
 //!
 //! Dominance is computed as a forward "availability" dataflow: a value is
 //! available at a block iff it is defined on all paths reaching it (the
-//! intersection, over predecessors, of the values they make available). This is
-//! exactly "the definition dominates the use" for SSA values, and it generalizes
-//! the old single-block definition-order check to arbitrary control-flow graphs.
-//! Only reachable blocks are verified. Block parameters (ADR-0017) are not yet
-//! implemented, so every value is still an instruction result.
+//! intersection, over predecessors, of the values they make available). A block's
+//! parameters count as definitions at that block. This is exactly "the definition
+//! dominates the use" for SSA values, and it generalizes the old single-block
+//! definition-order check to arbitrary control-flow graphs. Only reachable blocks
+//! are verified. Each branch's arguments must match the target block's parameters
+//! in count and type (block parameters — ADR-0017/0020 — are AIR's SSA merges).
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{Block, Function, InstData, Module, Terminator, Type, UnaryOp, Value};
+use crate::ir::{
+    Block, BranchTarget, Function, InstData, Module, Terminator, Type, UnaryOp, Value, ValueDef,
+};
 
 /// A structural problem found by [`verify`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,9 +66,12 @@ fn verify_function(function: &Function, errors: &mut Vec<VerifyError>) {
         }
 
         // Walk the block, growing the set of values defined at each point: the
-        // values available on entry (its dominators' definitions) plus those the
-        // block has defined so far.
+        // values available on entry (its dominators' definitions), its own
+        // parameters (defined at block entry), then those the body defines.
         let mut defined = avail_in.get(&bid).cloned().unwrap_or_default();
+        for &param in &block.params {
+            defined.insert(param);
+        }
         for &value in &block.body {
             check_inst(function, value, &defined, errors, &error);
             defined.insert(value);
@@ -122,10 +128,14 @@ fn compute_availability(
 
     // Predecessors, restricted to reachable blocks and in-range targets.
     let mut preds: HashMap<Block, Vec<Block>> = HashMap::new();
-    // Values defined within each block's body.
+    // Values defined within each block: its parameters plus its body.
     let mut defs: HashMap<Block, HashSet<Value>> = HashMap::new();
     for &block in reachable {
-        defs.insert(block, function.block(block).body.iter().copied().collect());
+        let data = function.block(block);
+        defs.insert(
+            block,
+            data.params.iter().chain(&data.body).copied().collect(),
+        );
         if let Some(terminator) = &function.block(block).terminator {
             for succ in terminator.successors() {
                 if succ.index() < block_count && reachable.contains(&succ) {
@@ -213,13 +223,19 @@ fn check_terminator(
                 );
             }
         }
-        Terminator::Br(target) => {
-            check_block_target(*target, block_count, block_index, errors, error)
-        }
+        Terminator::Br(target) => check_branch_target(
+            function,
+            target,
+            defined,
+            block_count,
+            block_index,
+            errors,
+            error,
+        ),
         Terminator::CondBr {
             cond,
-            then_block,
-            else_block,
+            then_branch,
+            else_branch,
         } => {
             if let Some(actual) = terminator_operand_type(
                 function,
@@ -239,28 +255,84 @@ fn check_terminator(
                     ),
                 );
             }
-            check_block_target(*then_block, block_count, block_index, errors, error);
-            check_block_target(*else_block, block_count, block_index, errors, error);
+            check_branch_target(
+                function,
+                then_branch,
+                defined,
+                block_count,
+                block_index,
+                errors,
+                error,
+            );
+            check_branch_target(
+                function,
+                else_branch,
+                defined,
+                block_count,
+                block_index,
+                errors,
+                error,
+            );
         }
     }
 }
 
-/// Validate a branch target refers to an existing block.
-fn check_block_target(
-    target: Block,
+/// Validate a branch edge: the target block exists, and the arguments passed
+/// match the target's parameters in count and type. Each argument must also be
+/// defined and dominate the branch.
+fn check_branch_target(
+    function: &Function,
+    target: &BranchTarget,
+    defined: &HashSet<Value>,
     block_count: usize,
     from_block: usize,
     errors: &mut Vec<VerifyError>,
     error: &impl Fn(&mut Vec<VerifyError>, String),
 ) {
-    if target.index() >= block_count {
+    if target.block.index() >= block_count {
         error(
             errors,
             format!(
                 "block{from_block}: branch to nonexistent block{}",
-                target.index()
+                target.block.index()
             ),
         );
+        return;
+    }
+
+    let params = &function.block(target.block).params;
+    if target.args.len() != params.len() {
+        error(
+            errors,
+            format!(
+                "block{from_block}: branch to block{} passes {} argument(s) but it has {} parameter(s)",
+                target.block.index(),
+                target.args.len(),
+                params.len()
+            ),
+        );
+        return;
+    }
+
+    for (&arg, &param) in target.args.iter().zip(params) {
+        if let Some(arg_ty) =
+            terminator_operand_type(function, arg, defined, errors, error, from_block, "br")
+        {
+            let param_ty = function.value_type(param);
+            if arg_ty != param_ty {
+                error(
+                    errors,
+                    format!(
+                        "block{from_block}: branch argument {} has type {} but block{} parameter {} has type {}",
+                        value_ref(arg),
+                        arg_ty.name(),
+                        target.block.index(),
+                        value_ref(param),
+                        param_ty.name()
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -305,9 +377,14 @@ fn check_inst(
     errors: &mut Vec<VerifyError>,
     error: &impl Fn(&mut Vec<VerifyError>, String),
 ) {
-    let inst = function.inst(value);
-    let result = inst.ty;
-    match inst.data {
+    let result = function.value_type(value);
+    let data = match function.value_def(value) {
+        ValueDef::Inst(data) => *data,
+        // Block parameters live in the block header, not the body, so this is
+        // unreachable for a well-formed function; their type is intrinsic.
+        ValueDef::Param { .. } => return,
+    };
+    match data {
         InstData::IConst(_) => check_result(result, Type::Int, value, errors, error),
         InstData::BConst(_) => check_result(result, Type::Bool, value, errors, error),
         InstData::Unary { op, operand } => {
@@ -438,7 +515,9 @@ fn value_ref(value: Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{BinaryOp, CmpOp, Function, InstData, Module, Terminator, Type, UnaryOp};
+    use crate::ir::{
+        BinaryOp, BranchTarget, CmpOp, Function, InstData, Module, Terminator, Type, UnaryOp,
+    };
     use aether_source::{BytePos, SourceMap, Span};
 
     fn span() -> Span {
@@ -644,12 +723,12 @@ mod tests {
             entry,
             Terminator::CondBr {
                 cond,
-                then_block: then_b,
-                else_block: else_b,
+                then_branch: BranchTarget::new(then_b),
+                else_branch: BranchTarget::new(else_b),
             },
         );
-        f.set_terminator(then_b, Terminator::Br(join));
-        f.set_terminator(else_b, Terminator::Br(join));
+        f.set_terminator(then_b, Terminator::Br(BranchTarget::new(join)));
+        f.set_terminator(else_b, Terminator::Br(BranchTarget::new(join)));
         // `%1` is defined in the entry, which dominates the join — a legal use.
         f.set_terminator(join, Terminator::Ret(v));
 
@@ -670,12 +749,12 @@ mod tests {
             entry,
             Terminator::CondBr {
                 cond,
-                then_block: then_b,
-                else_block: join,
+                then_branch: BranchTarget::new(then_b),
+                else_branch: BranchTarget::new(join),
             },
         );
         let only_in_then = f.push_inst(then_b, InstData::IConst(7), Type::Int, s);
-        f.set_terminator(then_b, Terminator::Br(join));
+        f.set_terminator(then_b, Terminator::Br(BranchTarget::new(join)));
         f.set_terminator(join, Terminator::Ret(only_in_then));
 
         let errors = verify(&module_with(f));
@@ -699,8 +778,8 @@ mod tests {
             entry,
             Terminator::CondBr {
                 cond: n, // an int, not a bool
-                then_block: then_b,
-                else_block: else_b,
+                then_branch: BranchTarget::new(then_b),
+                else_branch: BranchTarget::new(else_b),
             },
         );
         f.set_terminator(then_b, Terminator::Ret(n));
@@ -720,13 +799,74 @@ mod tests {
         let entry = f.entry();
         let v = f.push_inst(entry, InstData::IConst(1), Type::Int, s);
         // Branch to a block index that does not exist.
-        f.set_terminator(entry, Terminator::Br(Block::from_index(9)));
+        f.set_terminator(
+            entry,
+            Terminator::Br(BranchTarget::new(Block::from_index(9))),
+        );
         let _ = v;
 
         let errors = verify(&module_with(f));
         assert!(
             errors.iter().any(|e| e.message.contains("nonexistent")),
             "expected a bad-target error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn valid_block_parameter_function_verifies() {
+        // fn f() -> int { %0 = 7; br join(%0); join(%1: int): ret %1 }
+        let s = span();
+        let mut f = Function::new("f", Type::Int);
+        let entry = f.entry();
+        let join = f.append_block();
+        let param = f.append_block_param(join, Type::Int, s);
+        let seven = f.push_inst(entry, InstData::IConst(7), Type::Int, s);
+        f.set_terminator(
+            entry,
+            Terminator::Br(BranchTarget::with_args(join, vec![seven])),
+        );
+        f.set_terminator(join, Terminator::Ret(param));
+
+        assert!(verify(&module_with(f)).is_empty());
+    }
+
+    #[test]
+    fn branch_argument_arity_mismatch_is_caught() {
+        let s = span();
+        let mut f = Function::new("f", Type::Int);
+        let entry = f.entry();
+        let join = f.append_block();
+        let param = f.append_block_param(join, Type::Int, s);
+        // The join has one parameter, but the branch passes none.
+        f.set_terminator(entry, Terminator::Br(BranchTarget::new(join)));
+        f.set_terminator(join, Terminator::Ret(param));
+
+        let errors = verify(&module_with(f));
+        assert!(
+            errors.iter().any(|e| e.message.contains("parameter(s)")),
+            "expected an arity error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn branch_argument_type_mismatch_is_caught() {
+        let s = span();
+        let mut f = Function::new("f", Type::Int);
+        let entry = f.entry();
+        let join = f.append_block();
+        let param = f.append_block_param(join, Type::Int, s);
+        // Pass a bool where the join expects an int.
+        let b = f.push_inst(entry, InstData::BConst(true), Type::Bool, s);
+        f.set_terminator(
+            entry,
+            Terminator::Br(BranchTarget::with_args(join, vec![b])),
+        );
+        f.set_terminator(join, Terminator::Ret(param));
+
+        let errors = verify(&module_with(f));
+        assert!(
+            errors.iter().any(|e| e.message.contains("branch argument")),
+            "expected an argument-type error, got: {errors:?}"
         );
     }
 

@@ -15,7 +15,7 @@
 
 use std::fmt::Write as _;
 
-use crate::ir::{Function, InstData, Module, Terminator, Value};
+use crate::ir::{BranchTarget, Function, InstData, Module, Terminator, Value, ValueDef};
 
 /// Render a whole module to AIR's textual form (no trailing newline).
 ///
@@ -42,7 +42,7 @@ fn print_function(out: &mut String, function: &Function) {
     );
 
     for (index, block) in function.blocks().iter().enumerate() {
-        let _ = write!(out, "\nblock{index}:");
+        let _ = write!(out, "\nblock{index}{}:", block_params(function, block));
         for &value in &block.body {
             let _ = write!(
                 out,
@@ -63,50 +63,74 @@ fn value_ref(value: Value) -> String {
     format!("%{}", value.index())
 }
 
+/// A block's parameter list, e.g. `(%3: int, %4: bool)`, or empty if it has none.
+fn block_params(function: &Function, block: &crate::ir::BlockData) -> String {
+    if block.params.is_empty() {
+        return String::new();
+    }
+    let params: Vec<String> = block
+        .params
+        .iter()
+        .map(|&p| format!("{}: {}", value_ref(p), function.value_type(p).name()))
+        .collect();
+    format!("({})", params.join(", "))
+}
+
 fn inst_text(function: &Function, value: Value) -> String {
-    match function.inst(value).data {
-        InstData::IConst(n) => format!("iconst {n}"),
-        InstData::BConst(b) => format!("bconst {b}"),
-        InstData::Unary { op, operand } => format!("{} {}", op.mnemonic(), value_ref(operand)),
-        InstData::Binary { op, lhs, rhs } => {
-            format!("{} {}, {}", op.mnemonic(), value_ref(lhs), value_ref(rhs))
+    match function.value_def(value) {
+        ValueDef::Inst(InstData::IConst(n)) => format!("iconst {n}"),
+        ValueDef::Inst(InstData::BConst(b)) => format!("bconst {b}"),
+        ValueDef::Inst(InstData::Unary { op, operand }) => {
+            format!("{} {}", op.mnemonic(), value_ref(*operand))
         }
-        InstData::ICmp { op, lhs, rhs } => {
+        ValueDef::Inst(InstData::Binary { op, lhs, rhs }) => {
+            format!("{} {}, {}", op.mnemonic(), value_ref(*lhs), value_ref(*rhs))
+        }
+        ValueDef::Inst(InstData::ICmp { op, lhs, rhs }) => {
             format!(
                 "icmp {} {}, {}",
                 op.mnemonic(),
-                value_ref(lhs),
-                value_ref(rhs)
+                value_ref(*lhs),
+                value_ref(*rhs)
             )
         }
+        // Block parameters live in the block header, not the body, so this is
+        // never reached for a well-formed function.
+        ValueDef::Param { .. } => String::from("<param>"),
     }
 }
 
 fn terminator_text(terminator: &Terminator) -> String {
     match terminator {
         Terminator::Ret(value) => format!("ret {}", value_ref(*value)),
-        Terminator::Br(target) => format!("br {}", block_ref(*target)),
+        Terminator::Br(target) => format!("br {}", target_text(target)),
         Terminator::CondBr {
             cond,
-            then_block,
-            else_block,
+            then_branch,
+            else_branch,
         } => format!(
             "condbr {}, {}, {}",
             value_ref(*cond),
-            block_ref(*then_block),
-            block_ref(*else_block)
+            target_text(then_branch),
+            target_text(else_branch)
         ),
     }
 }
 
-fn block_ref(block: crate::ir::Block) -> String {
-    format!("block{}", block.index())
+/// A branch target, e.g. `block3` or `block3(%1, %2)` when it passes arguments.
+fn target_text(target: &BranchTarget) -> String {
+    if target.args.is_empty() {
+        format!("block{}", target.block.index())
+    } else {
+        let args: Vec<String> = target.args.iter().map(|&a| value_ref(a)).collect();
+        format!("block{}({})", target.block.index(), args.join(", "))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{BinaryOp, CmpOp, Function, InstData, Terminator, Type, UnaryOp};
+    use crate::ir::{BinaryOp, BranchTarget, CmpOp, Function, InstData, Terminator, Type, UnaryOp};
     use aether_source::{BytePos, SourceMap};
 
     fn dummy_span() -> aether_source::Span {
@@ -166,21 +190,30 @@ block0:
         let mut f = Function::new("f", Type::Int);
         let entry = f.entry();
         let cond = f.push_inst(entry, InstData::BConst(true), Type::Bool, span);
-        let v = f.push_inst(entry, InstData::IConst(42), Type::Int, span);
         let then_b = f.append_block();
         let else_b = f.append_block();
         let join = f.append_block();
+        // The join takes a parameter — the value merged from the two arms.
+        let param = f.append_block_param(join, Type::Int, span);
         f.set_terminator(
             entry,
             Terminator::CondBr {
                 cond,
-                then_block: then_b,
-                else_block: else_b,
+                then_branch: BranchTarget::new(then_b),
+                else_branch: BranchTarget::new(else_b),
             },
         );
-        f.set_terminator(then_b, Terminator::Br(join));
-        f.set_terminator(else_b, Terminator::Br(join));
-        f.set_terminator(join, Terminator::Ret(v));
+        let ten = f.push_inst(then_b, InstData::IConst(10), Type::Int, span);
+        f.set_terminator(
+            then_b,
+            Terminator::Br(BranchTarget::with_args(join, vec![ten])),
+        );
+        let twenty = f.push_inst(else_b, InstData::IConst(20), Type::Int, span);
+        f.set_terminator(
+            else_b,
+            Terminator::Br(BranchTarget::with_args(join, vec![twenty])),
+        );
+        f.set_terminator(join, Terminator::Ret(param));
 
         let mut module = Module::new();
         module.add_function(f);
@@ -191,13 +224,14 @@ block0:
 fn f() -> int {
 block0:
     %0 = bconst true
-    %1 = iconst 42
     condbr %0, block1, block2
 block1:
-    br block3
+    %2 = iconst 10
+    br block3(%2)
 block2:
-    br block3
-block3:
+    %3 = iconst 20
+    br block3(%3)
+block3(%1: int):
     ret %1
 }"
         );

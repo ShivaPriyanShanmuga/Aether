@@ -174,19 +174,15 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add the `:` token and parameter parsing (with an AST `Param` type)
   during language expansion (M6).
 
-### TD-0019 — No SSA merges (block parameters) yet
+### TD-0019 — No SSA merges (block parameters) yet — ✅ resolved (M6 slice 2c)
 - **Severity:** medium
-- **Context.** Multi-block AIR now exists: `br`/`condbr` terminators (M6 slice 2b),
-  dominance-based verification, and CFG execution. What remains is **SSA merges** —
-  a value whose definition depends on which predecessor edge executed. The
-  representation is decided: **block parameters**, not phi nodes (ADR-0017). No
-  merges are needed yet because `if`/`else` is a statement and `let` is immutable,
-  so nothing branch-computed is live at a join.
-- **Impact.** Expression-form `if` (`let m = if c { … } else { … };`) and
-  short-circuit `&&`/`||` cannot be represented, since both produce a merged value.
-- **Trigger.** Implement in M6 slice 2c: the `Value`-model refactor to a unified
-  value table (instruction result *or* block parameter), `br`/`condbr` carrying
-  per-edge arguments, and verifier/interpreter support for block parameters.
+- **Context.** SSA merges — a value whose definition depends on which predecessor
+  edge executed — needed a representation (ADR-0017 chose block parameters).
+- **Resolution.** Implemented in M6 slice 2c (ADR-0020): a unified value table
+  (`ValueData`/`ValueDef`), `Br`/`CondBr` carrying per-edge `BranchTarget` args,
+  verifier support (params as defs, argument arity/type), and interpreter
+  parameter binding — exercised end to end by short-circuit `&&`/`||`. See the
+  Resolved items section.
 
 ### TD-0020 — Missing `return` surfaces as an AIR verification error
 - **Severity:** medium
@@ -271,21 +267,23 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Impact.** Bindings cannot be explicitly typed.
 - **Trigger.** Add the `:` token and annotation parsing with the type system (M8).
 
-### TD-0029 — Left-associative comparisons; no `&&`/`||`; no if-expressions
+### TD-0029 — Left-associative comparisons; no if-expressions
 - **Severity:** low
 - **Context.** Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) parse as
   left-associative infix operators (M6 slice 2a). A chained `a < b < c` therefore
   parses as `(a < b) < c` and is rejected only later, by the AIR verifier's type
-  check, rather than by a friendly non-associativity error. The short-circuiting
-  logical operators `&&`/`||` and the **expression form of `if`** are not
-  implemented: all three produce a value merged from two paths, which needs SSA
-  block parameters (TD-0019).
+  check, rather than by a friendly non-associativity error. The **expression form
+  of `if`** (`let m = if c { … } else { … };`) is not implemented: it needs
+  block-with-tail-expression language design (a `Block` gains a trailing value,
+  expression-statements appear, and statement-`if` unifies with expression-`if`),
+  which is a deliberate language slice of its own. (Short-circuit `&&`/`||` — which
+  also merge — *are* implemented, M6 slice 2c.)
 - **Impact.** Chained comparisons produce an IR-level type error instead of a clear
-  syntax error; boolean conditions cannot be combined; `if` cannot be used as a
-  value (`let m = if c { … } else { … };`).
-- **Trigger.** Implement `&&`/`||` and if-expressions with block-parameter merges
-  (M6 slice 2c). Make comparisons non-associative (a targeted diagnostic) with the
-  type system (M8), or sooner if worthwhile.
+  syntax error; `if` cannot be used as a value.
+- **Trigger.** Add if-expressions in a dedicated slice (block-tail-expression
+  design; the block-parameter merge machinery it needs already exists, ADR-0020).
+  Make comparisons non-associative (a targeted diagnostic) with the type system
+  (M8), or sooner if worthwhile.
 
 ### TD-0030 — Verifier recomputes dominance inline
 - **Severity:** low
@@ -314,3 +312,6 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **TD-0027 — Variable scope is a single flat environment.** Resolved in M6 slice
   2b: lowering uses a scope stack (each braced block pushes one), giving lexical
   block scoping and shadowing (ADR-0019).
+- **TD-0019 — No SSA merges (block parameters).** Resolved in M6 slice 2c
+  (ADR-0020): a unified value table plus branch arguments implement block
+  parameters, exercised by short-circuit `&&`/`||`.

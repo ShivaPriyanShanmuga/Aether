@@ -7,12 +7,13 @@
 //! # Representation
 //!
 //! A [`Function`] owns flat arenas (the counterpart to the AST's `Box` tree, see
-//! ADR-0011): instructions live in a `Vec` addressed by [`Value`], and basic
-//! blocks in a `Vec` addressed by [`Block`]. A [`BlockData`] is an ordered list of
-//! the [`Value`]s computed in it, followed by a [`Terminator`]. Every value is the
-//! result of an instruction — including integer constants — so operands are
-//! uniformly just other [`Value`]s (SSA). Control-flow merges (and thus phi
-//! nodes / block parameters) are deferred until control flow is introduced.
+//! ADR-0011): a value table addressed by [`Value`] and basic blocks addressed by
+//! [`Block`]. A [`BlockData`] holds its parameters, an ordered list of the
+//! [`Value`]s computed in it, and a [`Terminator`]. Every value is defined either
+//! by an instruction (its result, constants included) or as a **block parameter**
+//! — see [`ValueDef`]. Block parameters are AIR's SSA merge mechanism (ADR-0017):
+//! a predecessor supplies a [`BranchTarget`]'s arguments on the edge it takes, and
+//! they become the successor's parameter values.
 //!
 //! # Facilities
 //!
@@ -29,8 +30,8 @@ mod print;
 mod verify;
 
 pub use ir::{
-    BinaryOp, Block, BlockData, CmpOp, Function, Inst, InstData, Module, Terminator, Type, UnaryOp,
-    Value,
+    BinaryOp, Block, BlockData, BranchTarget, CmpOp, Function, InstData, Module, Terminator, Type,
+    UnaryOp, Value, ValueDef,
 };
 pub use print::print;
 pub use verify::{VerifyError, verify};

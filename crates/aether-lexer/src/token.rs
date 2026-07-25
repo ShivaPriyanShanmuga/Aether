@@ -71,6 +71,10 @@ pub enum TokenKind {
     GtEq,
     /// A logical-not `!`.
     Bang,
+    /// A logical-and `&&`.
+    AmpAmp,
+    /// A logical-or `||`.
+    PipePipe,
 
     /// The end of the input. Always the final token; has an empty span.
     Eof,
@@ -111,6 +115,8 @@ impl TokenKind {
             Gt => "`>`",
             GtEq => "`>=`",
             Bang => "`!`",
+            AmpAmp => "`&&`",
+            PipePipe => "`||`",
             Eof => "end of file",
         }
     }
