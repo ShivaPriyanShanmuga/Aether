@@ -2,8 +2,8 @@
 
 **Snapshot date:** 2026-07-25
 **Current phase:** Phase 2 — Language & Frontend Depth
-**Current milestone:** M6 — Language expansion 🚧 (slice 1 done; slice 2a done)
-**Next milestone:** M6 slice 2b — `if`/`else` & the CFG
+**Current milestone:** M6 — Language expansion 🚧 (slices 1, 2a, 2b done)
+**Next milestone:** M6 slice 2c — SSA merges (if-expressions & `&&`/`||`)
 
 This document is the first thing to read at the start of a session. It reflects
 the repository's actual state, which always takes precedence over any external
@@ -16,9 +16,10 @@ memory or conversation history.
 M6 grows the language beyond a single `return`, in slices:
 
 1. **Local variables & bindings** — ✅ **complete**.
-2. **Control flow** — in two steps:
-   - **2a — booleans & comparisons** — ✅ **complete** (this session).
-   - **2b — `if`/`else` & the CFG** — ⬜ next.
+2. **Control flow** — in three steps:
+   - **2a — booleans & comparisons** — ✅ **complete**.
+   - **2b — statement `if`/`else` & the CFG** — ✅ **complete** (this session).
+   - **2c — SSA merges** (if-expressions, `&&`/`||`) — ⬜ next.
 3. **Functions: parameters & calls** — ⬜.
 
 ### M6 slice 1 — local variables & bindings (complete)
@@ -68,6 +69,35 @@ settling TD-0019); it is implemented next, in slice 2b.
 - Tests: **143 total, all passing** (+7 lexer, +5 parser, +2 ast, +5 air, +3 lower,
   +5 interp, +1 driver, net of doctest updates).
 
+### M6 slice 2b — statement `if`/`else` & the CFG (complete)
+
+The first real control-flow graph. `if`/`else` is a **statement** (no value yet);
+with immutable `let`, nothing branch-computed is live at a join, so no SSA merges —
+and therefore no block-parameter machinery — are needed. The AIR value model is
+untouched (ADR-0019).
+
+- `aether-lexer`: `if`/`else` keywords.
+- `aether-ast`: `Stmt::If` (`IfStmt` + `ElseBranch`, supporting `else if` chains);
+  pretty-printer prints `If`/`Then`/`Else`.
+- `aether-parser`: `if <cond> { … } [else { … } | else if …]`. The condition is an
+  expression; since expressions never begin with `{`, the block brace is
+  unambiguous.
+- `aether-air`: `Terminator::Br` and `Terminator::CondBr`, with a `successors()`
+  helper; the printer emits `br blockN` / `condbr %c, blockT, blockE`.
+- `aether-air` verifier: rewritten to be **CFG-aware** — reachability from entry,
+  a forward *availability* dataflow that enforces "a definition dominates its use"
+  across blocks, branch-target validity, and a `bool` `condbr` condition.
+- `aether-lower`: builds the CFG (then/else/join blocks; a join is created only
+  when an arm falls through, so both-arms-`return` leaves no dead block), and
+  replaces the flat name map with a **scope stack** for lexical block scoping and
+  shadowing (resolving TD-0027).
+- `aether-air-interp`: `run_function` now **walks the CFG**, following
+  `ret`/`br`/`condbr` between blocks (resolving TD-0023).
+- Decision: ADR-0019 (statement-form `if`, CFG lowering, dominance by
+  availability).
+- Tests: **166 total, all passing** (+2 lexer, +4 parser, +2 air-print, +5
+  air-verify, +5 lower, +6 interp, +1 driver, net of updates).
+
 ---
 
 ## Completed milestones
@@ -84,59 +114,54 @@ settling TD-0019); it is implemented next, in slice 2b.
 
 ## Current progress
 
-M6 slice 2a is finished; the workspace builds, lints cleanly, and all tests pass.
+M6 slice 2b is finished; the workspace builds, lints cleanly, and all tests pass.
 There is no in-progress work carried into the next session.
 
 **Verification (as of this snapshot):**
 - `cargo build --all-targets` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo fmt --all -- --check` — clean
-- `cargo test --all` — 143 passed, 0 failed
+- `cargo test --all` — 166 passed, 0 failed
 
 End-to-end: `aetherc file.ae` for
 `fn main() -> int { let x = 10; let y = x - 3; return x * y; }` prints `70`;
-`fn main() -> bool { let ok = 3 < 5; return ok == true; }` prints `true`;
-an unknown variable prints "cannot find `…` in this scope" and exits `1`.
+`fn main() -> int { let n = 7; if n < 0 { return 1; } else if n == 0 { return 2; } else { return n * 2; } }`
+prints `14`; an unknown variable prints "cannot find `…` in this scope" and
+exits `1`.
 
 ---
 
 ## Next recommended milestone
 
-**M6 slice 2b — `if`/`else` & the CFG.** This builds the first real control-flow
-graph on the foundation slice 2a laid (the `bool` type, comparisons, a type-aware
-verifier, and a runtime value enum). The hard architectural question is already
-answered: **SSA merges use block parameters, not phi nodes** (ADR-0017).
+**M6 slice 2c — SSA merges (if-expressions & `&&`/`||`).** This implements the
+block parameters decided in ADR-0017 — the one piece of control flow slice 2b
+deliberately deferred. It is where a value can depend on which branch executed.
 
 Scope:
-- **`aether-air` — the `Value`-model refactor** (do this first). Move to a unified
-  value table where a value's definition is either an instruction result or the
-  *i*-th parameter of a block, each carrying its `Type`. Add `br`/`condbr`
-  terminators that carry per-edge argument lists, and `Function` support for
-  appending blocks with typed parameters. Update the printer
-  (`br join(%a)`, `join(%p: int):`).
-- **Verifier → dominance-based.** Replace the single-block "operand index <
-  user index" rule with a dominance check that treats block parameters uniformly
-  ("every use, including a branch argument, is dominated by its definition"), plus
-  successor/argument-arity/type agreement on branches. (This is the payoff of the
-  block-parameter choice — one uniform rule.)
-- **Lexer/AST/parser.** Keywords `if`/`else`; `Stmt`/`Expr` for `if <cond> { … }
-  else { … }` (decide statement vs. expression form — an expression form is what
-  forces a real merge). Short-circuiting `&&`/`||` (lowered to branches, TD-0029).
-- **`aether-lower` — build the CFG.** Then/else/join blocks; introduce **scoped**
-  environments (a scope stack) for block bodies (TD-0027); pass values live out of
-  both branches as block-parameter arguments on each edge.
-- **`aether-air-interp` — CFG execution** (TD-0023). Follow `br`/`condbr` between
-  blocks with a current-block loop; bind a block's parameters from the taken
-  edge's arguments before executing its body.
-- Tests at every layer, plus end-to-end programs whose output depends on a branch
-  and on a value merged from both arms.
+- **`aether-air` — the `Value`-model refactor** (do this first, in isolation).
+  Move to a unified value table where a value's definition is either an instruction
+  result or the *i*-th parameter of a block, each carrying its `Type`. Give
+  `Br`/`CondBr` per-edge argument lists, and `Function` an API to append blocks
+  with typed parameters. Update the printer (`br join(%a)`, `join(%p: int):`).
+  This touches `ir.rs`, `print.rs`, `verify.rs`, `lower.rs`, and the interpreter,
+  so land it as its own change with hand-built IR tests before adding syntax.
+- **Verifier.** Extend the availability/dominance check to treat block parameters
+  as definitions at their block, and validate branch argument arity and types
+  against the target block's parameters.
+- **Lexer/AST/parser.** `&&`/`||` operators (below equality in precedence); the
+  **expression** form of `if` (`let m = if c { 10 } else { 20 };`) — likely an
+  `Expr::If` with block bodies that yield a trailing value.
+- **`aether-lower`.** Lower an if-expression by passing each arm's result to the
+  join block as a branch argument; the join's parameter is the expression's value.
+  Lower `&&`/`||` to short-circuiting branches with a bool-typed merge.
+- **`aether-air-interp`.** Bind a block's parameters from the taken edge's
+  arguments before executing the block body.
+- Tests at every layer, plus end-to-end programs whose output is a value merged
+  from both arms.
 
-Recommended ordering within the slice: land the AIR value-model refactor +
-terminators + dominance verifier first (with hand-built IR tests), then the
-frontend and lowering, then interpreter CFG execution. If it proves too large for
-one session, a clean cut is CFG-with-both-arms-returning (no merges) first, then
-merges. Follow the standard workflow: plan, implement, leave the repository green
-with updated docs.
+After 2c, control flow (slice 2) is complete and the next step is **slice 3 —
+functions: parameters & calls**. Follow the standard workflow: plan, implement,
+leave the repository green with updated docs.
 
 ---
 
@@ -145,27 +170,29 @@ with updated docs.
 **Green.** Nine crates (eight libraries plus the `aetherc` binary), clean
 one-directional dependencies. `aether-lower` also depends on `aether-diagnostics`
 (a foundational crate — allowed by the dependency rules) because it performs
-provisional name resolution. No cycles, no placeholder crates. AIR now carries two
-types (`int`, `bool`) and a type-aware verifier stands in for real type checking
-until M8. The one deliberate smudge — resolution living in lowering (ADR-0016) — is
-tracked (TD-0026) with a clear exit (a dedicated pass at M9). `aether-support` and
-a `Session` type remain unneeded (TD-0010): a flat `HashMap<String, Value>` still
-serves the variable environment. AIR's SSA-merge representation is now decided
-(block parameters, ADR-0017); implementing it (slice 2b) entails a contained
-`Value`-model refactor.
+provisional name resolution. No cycles, no placeholder crates. AIR now has
+multi-block functions with `br`/`condbr`, two types (`int`, `bool`), and a
+CFG-aware verifier (reachability + dominance-by-availability + branch/type checks)
+that stands in for real type checking until M8. Lowering uses a scope stack for
+lexical block scoping. The one deliberate smudge — resolution living in lowering
+(ADR-0016) — is tracked (TD-0026) with a clear exit (a dedicated pass at M9).
+`aether-support` and a `Session` type remain unneeded (TD-0010). The one remaining
+piece of control flow is SSA merges (block parameters, ADR-0017); implementing it
+(slice 2c) entails a contained `Value`-model refactor.
 
 ---
 
 ## Outstanding work / technical debt
 
 Nothing blocking. Tracked in [`TECH_DEBT.md`](TECH_DEBT.md). Resolved this slice:
-the runtime value enum (TD-0024). New from slice 2a: comparison associativity /
-deferred `&&`/`||` (TD-0029). The big carry-overs that slice 2b will resolve:
-single-block AIR / block-parameter merges (TD-0019, now *decided* per ADR-0017),
-entry-block-only interpreter (TD-0023), and single flat variable scope (TD-0027).
-Others: name resolution in lowering (TD-0026, M9), missing-return / literal-range
-checks pending M8 (TD-0020/0021), no `let` type annotations (TD-0028), no AIR text
-parser (TD-0022), overflow policy provisional (TD-0025), parser recovery/depth/
-params (TD-0016…0018), lexer limits (TD-0011…0015), `Span` packing (TD-0006),
-diagnostic polish (TD-0007/8/9), deferred `Session` (TD-0010), and the hand-rolled
-CLI → `clap` migration (TD-0001).
+entry-block-only interpreter (TD-0023) and single flat variable scope (TD-0027).
+The remaining carry-over that slice 2c will resolve: SSA merges / block parameters
+(TD-0019, decided per ADR-0017), which also unblocks if-expressions and `&&`/`||`
+(TD-0029). New: the verifier recomputes dominance inline until the M10 analysis
+framework (TD-0030). Others: name resolution in lowering (TD-0026, M9),
+missing-return / literal-range checks pending M8 (TD-0020/0021), no `let` type
+annotations (TD-0028), no AIR text parser (TD-0022), overflow policy provisional
+(TD-0025), parser recovery/depth/params (TD-0016…0018), lexer limits
+(TD-0011…0015), `Span` packing (TD-0006), diagnostic polish (TD-0007/8/9),
+deferred `Session` (TD-0010), and the hand-rolled CLI → `clap` migration
+(TD-0001).

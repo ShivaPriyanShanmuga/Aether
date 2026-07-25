@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use aether_air::{BinaryOp, CmpOp, Function, InstData, Module, Terminator, Type, UnaryOp, Value};
+use aether_air::{
+    BinaryOp, Block, CmpOp, Function, InstData, Module, Terminator, Type, UnaryOp, Value,
+};
 use aether_ast::{self as ast, Expr, Program};
 use aether_diagnostics::Diagnostic;
 use aether_source::Span;
@@ -42,12 +44,15 @@ pub fn lower(program: &Program) -> LowerResult {
 }
 
 fn lower_fn(decl: &ast::FnDecl, diagnostics: &mut Vec<Diagnostic>) -> Function {
+    let function = Function::new(decl.name.name.clone(), lower_type(&decl.return_type));
+    let entry = function.entry();
     let mut lowerer = FnLowerer {
-        function: Function::new(decl.name.name.clone(), lower_type(&decl.return_type)),
-        env: HashMap::new(),
+        function,
+        scopes: Vec::new(),
+        current: entry,
         diagnostics,
     };
-    lowerer.lower_body(&decl.body.stmts);
+    lowerer.lower_fn_body(&decl.body);
     lowerer.function
 }
 
@@ -64,37 +69,178 @@ fn lower_type(ty: &ast::Type) -> Type {
 /// Per-function lowering state.
 struct FnLowerer<'a> {
     function: Function,
-    /// Maps in-scope variable names to the SSA value holding their contents.
-    env: HashMap<String, Value>,
+    /// A stack of lexical scopes; the innermost is last. Name resolution searches
+    /// from innermost outward, giving block scoping and shadowing (TD-0027).
+    scopes: Vec<HashMap<String, Value>>,
+    /// The block instructions are currently appended to. It advances as control
+    /// flow is lowered (e.g. to a branch's `then`/`else`/join block).
+    current: Block,
     diagnostics: &'a mut Vec<Diagnostic>,
 }
 
 impl FnLowerer<'_> {
-    fn lower_body(&mut self, stmts: &[ast::Stmt]) {
-        let entry = self.function.entry();
+    /// Lower a function body: the whole body is a lexical scope.
+    fn lower_fn_body(&mut self, body: &ast::Block) {
+        self.push_scope();
+        self.lower_stmts(&body.stmts);
+        self.pop_scope();
+        // If control falls through the body without a `return`, `self.current` is
+        // left unterminated; the verifier reports it as a missing terminator
+        // (a "missing return", TD-0020) until semantic analysis (M8) does so.
+    }
+
+    /// Lower a sequence of statements into the current block, following control
+    /// flow. Returns whether control **falls through** (`true`) or every path
+    /// diverged via `return` (`false`), in which case later statements are
+    /// unreachable and left unlowered.
+    fn lower_stmts(&mut self, stmts: &[ast::Stmt]) -> bool {
         for stmt in stmts {
-            match stmt {
-                ast::Stmt::Let(let_stmt) => {
-                    // Lower the initializer *before* binding the name, so the name
-                    // is not visible in its own initializer (use-before-def is an
-                    // error). A later binding of the same name simply rebinds.
-                    let value = self.lower_expr(entry, &let_stmt.init);
-                    self.env.insert(let_stmt.name.name.clone(), value);
-                }
-                ast::Stmt::Return(ret) => {
-                    let value = self.lower_expr(entry, &ret.expr);
-                    self.function.set_terminator(entry, Terminator::Ret(value));
-                    // The first `return` terminates the block; any following
-                    // statements are unreachable and are left unlowered.
-                    break;
-                }
+            if !self.lower_stmt(stmt) {
+                return false;
             }
         }
+        true
+    }
+
+    /// Lower one statement. Returns whether control falls through afterwards.
+    fn lower_stmt(&mut self, stmt: &ast::Stmt) -> bool {
+        match stmt {
+            ast::Stmt::Let(let_stmt) => {
+                // Lower the initializer *before* binding the name, so the name is
+                // not visible in its own initializer (use-before-def is an error).
+                // A later binding of the same name in the same scope rebinds it.
+                let value = self.lower_expr(self.current, &let_stmt.init);
+                self.bind(let_stmt.name.name.clone(), value);
+                true
+            }
+            ast::Stmt::Return(ret) => {
+                let value = self.lower_expr(self.current, &ret.expr);
+                self.function
+                    .set_terminator(self.current, Terminator::Ret(value));
+                false // diverges
+            }
+            ast::Stmt::If(if_stmt) => self.lower_if(if_stmt),
+        }
+    }
+
+    /// Lower an `if`/`else` into a control-flow graph: a conditional branch from
+    /// the current block to a `then` block and an `else`/join block, with each
+    /// arm branching to a shared join where control reconverges.
+    ///
+    /// Returns whether control falls through past the `if`. It does *not* create a
+    /// join when both arms diverge (e.g. both `return`), which keeps the CFG free
+    /// of unreachable blocks.
+    fn lower_if(&mut self, s: &ast::IfStmt) -> bool {
+        let cond = self.lower_expr(self.current, &s.cond);
+        let pred = self.current;
+
+        // Then branch, in its own scope.
+        let then_block = self.function.append_block();
+        self.current = then_block;
+        self.push_scope();
+        let then_falls = self.lower_stmts(&s.then_block.stmts);
+        self.pop_scope();
+        let then_exit = self.current;
+
+        // Else branch (if present), in its own scope.
+        let else_info = s.else_branch.as_ref().map(|else_branch| {
+            let else_block = self.function.append_block();
+            self.current = else_block;
+            self.push_scope();
+            let else_falls = self.lower_else(else_branch);
+            self.pop_scope();
+            (else_block, else_falls, self.current)
+        });
+
+        // Control reconverges at a join unless both arms diverge. Without an
+        // `else`, the false edge always reaches the continuation, so a join is
+        // always needed.
+        let need_join = match &else_info {
+            None => true,
+            Some((_, else_falls, _)) => then_falls || *else_falls,
+        };
+
+        if !need_join {
+            let (else_block, _, _) =
+                else_info.expect("both arms diverging implies an else branch exists");
+            self.function.set_terminator(
+                pred,
+                Terminator::CondBr {
+                    cond,
+                    then_block,
+                    else_block,
+                },
+            );
+            return false;
+        }
+
+        let join = self.function.append_block();
+        let else_target = match &else_info {
+            Some((else_block, _, _)) => *else_block,
+            None => join,
+        };
+        self.function.set_terminator(
+            pred,
+            Terminator::CondBr {
+                cond,
+                then_block,
+                else_block: else_target,
+            },
+        );
+
+        // Each arm that falls through branches to the join.
+        if then_falls {
+            self.function
+                .set_terminator(then_exit, Terminator::Br(join));
+        }
+        if let Some((_, else_falls, else_exit)) = else_info
+            && else_falls
+        {
+            self.function
+                .set_terminator(else_exit, Terminator::Br(join));
+        }
+
+        self.current = join;
+        true
+    }
+
+    /// Lower an `else` branch (a block or a chained `else if`).
+    fn lower_else(&mut self, else_branch: &ast::ElseBranch) -> bool {
+        match else_branch {
+            ast::ElseBranch::Block(block) => self.lower_stmts(&block.stmts),
+            ast::ElseBranch::If(nested) => self.lower_if(nested),
+        }
+    }
+
+    /// Enter a new lexical scope.
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    /// Leave the innermost lexical scope.
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    /// Bind `name` to `value` in the innermost scope.
+    fn bind(&mut self, name: String, value: Value) {
+        self.scopes
+            .last_mut()
+            .expect("a scope is always active during lowering")
+            .insert(name, value);
+    }
+
+    /// Resolve `name` to its bound value, searching innermost scope outward.
+    fn resolve(&self, name: &str) -> Option<Value> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
     }
 
     /// Lower an expression, appending instructions to `block` and returning the
     /// [`Value`] holding its result.
-    fn lower_expr(&mut self, block: aether_air::Block, expr: &Expr) -> Value {
+    fn lower_expr(&mut self, block: Block, expr: &Expr) -> Value {
         match expr {
             Expr::IntLit { value, span } => {
                 self.function
@@ -134,7 +280,7 @@ impl FnLowerer<'_> {
                 }
             }
             Expr::Name { name, span } => {
-                if let Some(&value) = self.env.get(name) {
+                if let Some(value) = self.resolve(name) {
                     value
                 } else {
                     self.error(*span, format!("cannot find `{name}` in this scope"));
@@ -302,6 +448,82 @@ block0:
                 "operator `{sym}` did not lower to `icmp {mnemonic}`:\n{air}"
             );
         }
+    }
+
+    #[test]
+    fn lowers_if_else_both_arms_return() {
+        // Both arms diverge, so no join block is emitted.
+        assert_eq!(
+            lower_str("fn main() -> int { if true { return 1; } else { return 2; } }"),
+            "\
+fn main() -> int {
+block0:
+    %0 = bconst true
+    condbr %0, block1, block2
+block1:
+    %1 = iconst 1
+    ret %1
+block2:
+    %2 = iconst 2
+    ret %2
+}"
+        );
+    }
+
+    #[test]
+    fn lowers_if_without_else_and_falls_through_to_join() {
+        // The false edge and the (here non-taken) fall-through reconverge at the
+        // join block, which returns a value defined before the `if`.
+        assert_eq!(
+            lower_str("fn main() -> int { let x = 5; if x < 3 { return 1; } return x; }"),
+            "\
+fn main() -> int {
+block0:
+    %0 = iconst 5
+    %1 = iconst 3
+    %2 = icmp lt %0, %1
+    condbr %2, block1, block2
+block1:
+    %3 = iconst 1
+    ret %3
+block2:
+    ret %0
+}"
+        );
+    }
+
+    #[test]
+    fn both_arms_falling_through_reconverge_at_join() {
+        // Neither arm returns; both branch to the join, which returns `x` (defined
+        // in the entry, so it dominates the join).
+        let air = lower_str(
+            "fn main() -> int { let x = 1; if true { let a = 2; } else { let b = 3; } return x; }",
+        );
+        assert!(air.contains("condbr %"), "expected a condbr:\n{air}");
+        // Both arms fall through, so each emits an unconditional `br` to the join.
+        assert_eq!(
+            air.matches("br block").count(),
+            2,
+            "two `br` to the join:\n{air}"
+        );
+        // The join returns `x` (%0), defined in the entry, which dominates it.
+        assert!(air.contains("ret %0"), "join returns x:\n{air}");
+    }
+
+    #[test]
+    fn branch_local_binding_is_not_visible_after_the_if() {
+        // `y` is bound inside the then-block's scope and is gone at the join.
+        let (_air, diags) = lower_checked("fn main() -> int { if true { let y = 1; } return y; }");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("cannot find `y`"));
+    }
+
+    #[test]
+    fn outer_binding_visible_inside_a_branch() {
+        // `x` from the enclosing scope resolves inside the then-block.
+        let (_air, diags) =
+            lower_checked("fn main() -> int { let x = 7; if true { return x; } return 0; }");
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
     }
 
     #[test]

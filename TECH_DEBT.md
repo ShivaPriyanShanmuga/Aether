@@ -174,17 +174,19 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add the `:` token and parameter parsing (with an AST `Param` type)
   during language expansion (M6).
 
-### TD-0019 — AIR is single-block; block-parameter merges not yet implemented
+### TD-0019 — No SSA merges (block parameters) yet
 - **Severity:** medium
-- **Context.** AIR functions currently have one basic block (straight-line code).
-  Multiple blocks, branch terminators (`br`/`condbr`), and SSA merges are not yet
-  implemented. The representation question is now **decided**: merges use **block
-  parameters**, not phi nodes (ADR-0017). What remains is the implementation.
-- **Impact.** No control flow can be represented yet.
-- **Trigger.** Implement in M6 slice 2b: the `Value`-model refactor to a unified
-  value table (instruction result *or* block parameter), `br`/`condbr`
-  terminators carrying edge arguments, and a dominance-based def-before-use
-  verifier that treats block parameters uniformly.
+- **Context.** Multi-block AIR now exists: `br`/`condbr` terminators (M6 slice 2b),
+  dominance-based verification, and CFG execution. What remains is **SSA merges** —
+  a value whose definition depends on which predecessor edge executed. The
+  representation is decided: **block parameters**, not phi nodes (ADR-0017). No
+  merges are needed yet because `if`/`else` is a statement and `let` is immutable,
+  so nothing branch-computed is live at a join.
+- **Impact.** Expression-form `if` (`let m = if c { … } else { … };`) and
+  short-circuit `&&`/`||` cannot be represented, since both produce a merged value.
+- **Trigger.** Implement in M6 slice 2c: the `Value`-model refactor to a unified
+  value table (instruction result *or* block parameter), `br`/`condbr` carrying
+  per-edge arguments, and verifier/interpreter support for block parameters.
 
 ### TD-0020 — Missing `return` surfaces as an AIR verification error
 - **Severity:** medium
@@ -216,14 +218,13 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add a textual AIR parser if/when hand-written IR tests or an
   `aetherc` "assemble AIR" entry point are wanted.
 
-### TD-0023 — Interpreter executes only the entry block
+### TD-0023 — Interpreter executes only the entry block — ✅ resolved (M6 slice 2b)
 - **Severity:** medium
-- **Context.** `run_function` evaluates the entry block and acts on its
-  terminator; it does not follow branches between blocks (there are none yet).
-- **Impact.** No control flow can be executed. Pairs with TD-0019 (single-block
-  AIR).
-- **Trigger.** Extend to CFG execution (a work-list / successor-following loop,
-  and phi/block-parameter handling) alongside control-flow language features (M6).
+- **Context.** `run_function` originally evaluated only the entry block.
+- **Resolution.** It now walks the CFG: evaluating each block and following its
+  terminator (`ret`/`br`/`condbr`) to the next block. Block-parameter transfers
+  will be added with SSA merges (TD-0019, slice 2c). See the Resolved items
+  section.
 
 ### TD-0024 — Runtime values are `i64` only — ✅ resolved (M6 slice 2a)
 - **Severity:** low
@@ -253,13 +254,14 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
   (and enforces scope rules) ahead of lowering; lowering then assumes resolved
   names and becomes infallible again.
 
-### TD-0027 — Variable scope is a single flat environment
+### TD-0027 — Variable scope is a single flat environment — ✅ resolved (M6 slice 2b)
 - **Severity:** low
-- **Context.** The lowering environment is one flat `HashMap` per function.
-  Redefining a name rebinds it (last wins); there are no nested/block scopes.
-- **Impact.** No lexical block scoping or formal shadowing rules yet.
-- **Trigger.** Add scoped environments (a scope stack) alongside control-flow
-  blocks (M6 slice 2), and formalize shadowing in name resolution (M9).
+- **Context.** The lowering environment was one flat `HashMap` per function.
+- **Resolution.** Lowering now uses a stack of scopes (each braced block pushes
+  one), giving lexical block scoping and shadowing: a branch-local `let` is
+  invisible after the `if`, and name resolution searches innermost outward.
+  Formal shadowing rules move to name resolution (M9). See the Resolved items
+  section.
 
 ### TD-0028 — `let` has no type annotation
 - **Severity:** low
@@ -269,19 +271,32 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Impact.** Bindings cannot be explicitly typed.
 - **Trigger.** Add the `:` token and annotation parsing with the type system (M8).
 
-### TD-0029 — Comparisons are left-associative; no short-circuit `&&`/`||`
+### TD-0029 — Left-associative comparisons; no `&&`/`||`; no if-expressions
 - **Severity:** low
 - **Context.** Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`) parse as
   left-associative infix operators (M6 slice 2a). A chained `a < b < c` therefore
   parses as `(a < b) < c` and is rejected only later, by the AIR verifier's type
-  check (a `bool` where an `int` is required), rather than by a friendly
-  non-associativity error at parse time. The short-circuiting logical operators
-  `&&`/`||` are not implemented yet: their semantics require control flow.
-- **Impact.** Chained comparisons produce an IR-level type error instead of a
-  clear syntax error; boolean expressions cannot yet combine conditions.
-- **Trigger.** Add `&&`/`||` with control flow (M6 slice 2b), lowering them to
-  branches. Make comparisons non-associative (a targeted diagnostic) when the
-  type system lands (M8), or sooner if it proves worthwhile.
+  check, rather than by a friendly non-associativity error. The short-circuiting
+  logical operators `&&`/`||` and the **expression form of `if`** are not
+  implemented: all three produce a value merged from two paths, which needs SSA
+  block parameters (TD-0019).
+- **Impact.** Chained comparisons produce an IR-level type error instead of a clear
+  syntax error; boolean conditions cannot be combined; `if` cannot be used as a
+  value (`let m = if c { … } else { … };`).
+- **Trigger.** Implement `&&`/`||` and if-expressions with block-parameter merges
+  (M6 slice 2c). Make comparisons non-associative (a targeted diagnostic) with the
+  type system (M8), or sooner if worthwhile.
+
+### TD-0030 — Verifier recomputes dominance inline
+- **Severity:** low
+- **Context.** The verifier computes value availability (its dominance check) with
+  a forward dataflow fixpoint each time it runs; there is no shared dominator-tree
+  analysis, and the result is not cached or reused.
+- **Impact.** Redundant work if other consumers later need dominance; the naive
+  set-based fixpoint is fine for today's small functions but not asymptotically
+  ideal.
+- **Trigger.** When the analysis framework (M10) provides a dominator-tree
+  analysis, have the verifier consume it instead of recomputing.
 
 ---
 
@@ -293,3 +308,9 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **TD-0024 — Runtime values are `i64` only.** Resolved in M6 slice 2a: the
   interpreter now uses a `RunValue { Int(i64), Bool(bool) }` enum (ADR-0018),
   which later types (M8) will extend.
+- **TD-0023 — Interpreter executes only the entry block.** Resolved in M6 slice
+  2b: `run_function` walks the CFG, following `ret`/`br`/`condbr`. Block-parameter
+  transfers arrive with SSA merges (TD-0019).
+- **TD-0027 — Variable scope is a single flat environment.** Resolved in M6 slice
+  2b: lowering uses a scope stack (each braced block pushes one), giving lexical
+  block scoping and shadowing (ADR-0019).

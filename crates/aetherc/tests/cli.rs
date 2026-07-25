@@ -114,6 +114,27 @@ fn runs_a_boolean_program_and_prints_true_or_false() {
 }
 
 #[test]
+fn runs_a_branching_program() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_branch_{}.ae", std::process::id()));
+    std::fs::write(
+        &path,
+        b"fn main() -> int { let n = 7; if n < 0 { return 1; } else if n == 0 { return 2; } else { return n * 2; } }\n",
+    )
+    .expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "14", "stdout was:\n{stdout}");
+}
+
+#[test]
 fn unknown_variable_is_a_compile_error() {
     let mut path: PathBuf = std::env::temp_dir();
     path.push(format!("aetherc_it_unknown_{}.ae", std::process::id()));

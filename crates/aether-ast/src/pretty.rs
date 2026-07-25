@@ -15,7 +15,7 @@
 //!             IntLit 3
 //! ```
 
-use crate::ast::{Block, Expr, Item, Program, Stmt};
+use crate::ast::{Block, ElseBranch, Expr, IfStmt, Item, Program, Stmt};
 
 /// Render `program` as an indented tree (two spaces per level, no trailing
 /// newline).
@@ -86,7 +86,34 @@ impl Printer {
                 self.expr(&r.expr);
                 self.depth -= 1;
             }
+            Stmt::If(i) => self.if_stmt(i),
         }
+    }
+
+    fn if_stmt(&mut self, i: &IfStmt) {
+        self.line("If");
+        self.depth += 1;
+        self.expr(&i.cond);
+        self.line("Then");
+        self.depth += 1;
+        for stmt in &i.then_block.stmts {
+            self.stmt(stmt);
+        }
+        self.depth -= 1;
+        if let Some(else_branch) = &i.else_branch {
+            self.line("Else");
+            self.depth += 1;
+            match else_branch {
+                ElseBranch::Block(b) => {
+                    for stmt in &b.stmts {
+                        self.stmt(stmt);
+                    }
+                }
+                ElseBranch::If(nested) => self.if_stmt(nested),
+            }
+            self.depth -= 1;
+        }
+        self.depth -= 1;
     }
 
     fn expr(&mut self, expr: &Expr) {

@@ -62,16 +62,19 @@ Grow the language and give the frontend real semantic teeth.
   1. **Local variables & bindings** ✅ — `let`, identifier expressions, and a
      name→value environment in lowering (straight-line, single-block AIR; lowering
      does provisional name resolution — ADR-0016).
-  2. **Control flow** 🚧 — tackled in two steps:
+  2. **Control flow** 🚧 — tackled in three steps:
      - **2a — booleans & comparisons** ✅ — the `bool` type, `true`/`false`,
        comparison operators (`== != < <= > >=`) and logical `!`, a type-aware AIR
        verifier, and a runtime value enum. Straight-line (no CFG yet). The
        SSA-merge representation was decided here — **block parameters**, not phi
-       nodes (ADR-0017, settling TD-0019).
-     - **2b — `if`/`else` & the CFG** ⬜ ← next — multi-block AIR, `br`/`condbr`
-       terminators, block-parameter merges, dominance-based verification, scoped
-       environments, short-circuit `&&`/`||`, and CFG execution in the
-       interpreter.
+       nodes (ADR-0017).
+     - **2b — statement `if`/`else` & the CFG** ✅ — `if`/`else`/`else if`,
+       multi-block AIR with `br`/`condbr`, dominance-based verification, scoped
+       environments, and CFG execution in the interpreter (ADR-0019). No SSA
+       merges yet (statement `if` + immutable `let` needs none).
+     - **2c — merges: if-expressions & `&&`/`||`** ⬜ ← next — the `Value`-model
+       refactor and block parameters (implementing ADR-0017), the expression form
+       of `if`, and short-circuit `&&`/`||`.
   3. **Functions: parameters & calls** ⬜ — adds a `:` token, parameters, a call
      instruction, and interpreter call frames.
 - **M7 — Name resolution & scopes** ⬜
@@ -135,6 +138,6 @@ add today's code.
 
 ## Next milestone
 
-**M6 — Language expansion**, next slice: **2b — `if`/`else` & the CFG** (the
-merge representation is already decided: block parameters, ADR-0017). See
+**M6 — Language expansion**, next slice: **2c — SSA merges** (if-expressions and
+`&&`/`||`), implementing the block parameters decided in ADR-0017. See
 [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

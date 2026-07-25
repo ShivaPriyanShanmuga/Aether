@@ -133,20 +133,23 @@ exists**. The design is:
   are `int` and `bool`; comparisons produce `bool`.)
 - **SSA-based** with a control-flow graph of basic blocks. Every value is the
   result of an instruction (constants included), so operands are uniformly other
-  values. (Today functions have a single block. Multiple blocks and SSA merges
-  arrive with control flow; the merge representation is decided — **block
-  parameters**, not phi nodes, ADR-0017 — and lands in M6 slice 2b, at which point
-  a value becomes "an instruction result *or* a block parameter".)
+  values. Functions can have multiple blocks connected by `br`/`condbr`
+  terminators (M6 slice 2b). SSA **merges** are not yet implemented; the
+  representation is decided — **block parameters**, not phi nodes (ADR-0017) — and
+  lands in M6 slice 2c, at which point a value becomes "an instruction result *or*
+  a block parameter".
 - **id/arena representation** — a `Function` owns flat arenas of instructions
   (addressed by `Value`) and blocks (addressed by `Block`), the deliberate
   counterpart to the AST's `Box` tree (ADR-0011). This gives stable ids, side
   tables, and cross-block references without lifetime threading.
 - **Textual form** — a human-readable printer (used by `--dump-air` and golden
   tests). A textual *parser* (full round-tripping) is future work.
-- **Verifiable** — a verifier checks structural invariants (every block
-  terminated, def-before-use, per-instruction operand/result type agreement across
-  `int`/`bool`, return type match). Dominance-based checking arrives with control
-  flow.
+- **Verifiable** — a verifier checks structural invariants: every reachable block
+  is terminated and branches target real blocks; a definition **dominates** every
+  use (computed as a forward availability dataflow); per-instruction operand/result
+  types agree across `int`/`bool`; a `condbr` condition is a `bool`; and a `ret`
+  matches the function's return type. A dedicated dominator-tree analysis (M10)
+  will later replace the inline dominance computation.
 - **Target-independent** and **frontend-independent** — `aether-air` depends only
   on `aether-source`; AST → AIR lowering lives in the separate `aether-lower`
   crate.

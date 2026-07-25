@@ -1,7 +1,8 @@
 //! The recursive-descent parser with Pratt expression parsing.
 
 use aether_ast::{
-    BinOp, Block, Expr, FnDecl, Ident, Item, LetStmt, Program, ReturnStmt, Stmt, Type, UnOp,
+    BinOp, Block, ElseBranch, Expr, FnDecl, Ident, IfStmt, Item, LetStmt, Program, ReturnStmt,
+    Stmt, Type, UnOp,
 };
 use aether_diagnostics::Diagnostic;
 use aether_lexer::{Token, TokenKind};
@@ -221,6 +222,8 @@ impl<'a> Parser<'a> {
             self.parse_let_stmt().map(Stmt::Let)
         } else if self.at(TokenKind::Return) {
             self.parse_return_stmt().map(Stmt::Return)
+        } else if self.at(TokenKind::If) {
+            self.parse_if_stmt().map(Stmt::If)
         } else {
             let found = self.peek();
             self.error(
@@ -230,6 +233,39 @@ impl<'a> Parser<'a> {
             );
             None
         }
+    }
+
+    /// Parse an `if <cond> { … } [else { … } | else if …]`. Assumes the current
+    /// token is `if`. The condition is an expression; because expressions never
+    /// begin with `{`, the block's opening brace is unambiguous.
+    fn parse_if_stmt(&mut self) -> Option<IfStmt> {
+        let kw = self.bump().span; // `if`
+        let cond = self.parse_expr(0);
+        let then_block = self.parse_block()?;
+        let mut end = then_block.span;
+
+        let else_branch = if self.at(TokenKind::Else) {
+            self.bump(); // `else`
+            if self.at(TokenKind::If) {
+                // `else if …` — a chained conditional.
+                let nested = self.parse_if_stmt()?;
+                end = nested.span;
+                Some(ElseBranch::If(Box::new(nested)))
+            } else {
+                let block = self.parse_block()?;
+                end = block.span;
+                Some(ElseBranch::Block(block))
+            }
+        } else {
+            None
+        };
+
+        Some(IfStmt {
+            cond,
+            then_block,
+            else_branch,
+            span: kw.to(end),
+        })
     }
 
     fn parse_let_stmt(&mut self) -> Option<LetStmt> {
@@ -637,5 +673,62 @@ Program
                 "missing `Binary {sym}` in:\n{tree}"
             );
         }
+    }
+
+    #[test]
+    fn parses_if_else() {
+        let tree = parse_ok("fn f() -> int { if x < 0 { return 1; } else { return 2; } }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"f\" -> \"int\"
+    Block
+      If
+        Binary <
+          Name \"x\"
+          IntLit 0
+        Then
+          Return
+            IntLit 1
+        Else
+          Return
+            IntLit 2"
+        );
+    }
+
+    #[test]
+    fn parses_if_without_else() {
+        let tree = parse_ok("fn f() -> int { if c { return 1; } return 2; }");
+        assert!(tree.contains("If"));
+        assert!(tree.contains("Then"));
+        assert!(!tree.contains("Else"), "unexpected Else in:\n{tree}");
+        // The trailing `return 2;` is a sibling of the `if`, not inside it.
+        let then = tree.find("Then").unwrap();
+        let ret2 = tree.rfind("Return").unwrap();
+        assert!(ret2 > then);
+    }
+
+    #[test]
+    fn parses_else_if_chain() {
+        let tree = parse_ok(
+            "fn f() -> int { if a { return 1; } else if b { return 2; } else { return 3; } }",
+        );
+        // The `else if` nests a second `If` under the first's `Else`.
+        assert_eq!(
+            tree.matches("If").count(),
+            2,
+            "expected two If nodes:\n{tree}"
+        );
+        let first_else = tree.find("Else").unwrap();
+        let second_if = tree.rfind("If").unwrap();
+        assert!(second_if > first_else, "nested if not under else:\n{tree}");
+    }
+
+    #[test]
+    fn if_condition_is_not_confused_by_the_block_brace() {
+        // `if a < b { … }` — the `<` comparison, then the block, with no ambiguity.
+        let tree = parse_ok("fn f() -> bool { if a < b { return true; } return false; }");
+        assert!(tree.contains("Binary <"));
     }
 }

@@ -85,7 +85,22 @@ fn inst_text(function: &Function, value: Value) -> String {
 fn terminator_text(terminator: &Terminator) -> String {
     match terminator {
         Terminator::Ret(value) => format!("ret {}", value_ref(*value)),
+        Terminator::Br(target) => format!("br {}", block_ref(*target)),
+        Terminator::CondBr {
+            cond,
+            then_block,
+            else_block,
+        } => format!(
+            "condbr {}, {}, {}",
+            value_ref(*cond),
+            block_ref(*then_block),
+            block_ref(*else_block)
+        ),
     }
+}
+
+fn block_ref(block: crate::ir::Block) -> String {
+    format!("block{}", block.index())
 }
 
 #[cfg(test)]
@@ -141,6 +156,49 @@ block0:
     %2 = icmp lt %0, %1
     %3 = not %2
     ret %3
+}"
+        );
+    }
+
+    #[test]
+    fn prints_branch_terminators_and_multiple_blocks() {
+        let span = dummy_span();
+        let mut f = Function::new("f", Type::Int);
+        let entry = f.entry();
+        let cond = f.push_inst(entry, InstData::BConst(true), Type::Bool, span);
+        let v = f.push_inst(entry, InstData::IConst(42), Type::Int, span);
+        let then_b = f.append_block();
+        let else_b = f.append_block();
+        let join = f.append_block();
+        f.set_terminator(
+            entry,
+            Terminator::CondBr {
+                cond,
+                then_block: then_b,
+                else_block: else_b,
+            },
+        );
+        f.set_terminator(then_b, Terminator::Br(join));
+        f.set_terminator(else_b, Terminator::Br(join));
+        f.set_terminator(join, Terminator::Ret(v));
+
+        let mut module = Module::new();
+        module.add_function(f);
+
+        assert_eq!(
+            print(&module),
+            "\
+fn f() -> int {
+block0:
+    %0 = bconst true
+    %1 = iconst 42
+    condbr %0, block1, block2
+block1:
+    br block3
+block2:
+    br block3
+block3:
+    ret %1
 }"
         );
     }

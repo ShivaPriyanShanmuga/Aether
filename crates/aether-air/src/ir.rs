@@ -194,6 +194,33 @@ pub struct Inst {
 pub enum Terminator {
     /// Return a value from the function.
     Ret(Value),
+    /// Unconditionally branch to another block.
+    Br(Block),
+    /// Branch to `then_block` if `cond` (a `bool`) is true, else `else_block`.
+    CondBr {
+        /// The boolean condition selecting the successor.
+        cond: Value,
+        /// The successor taken when `cond` is true.
+        then_block: Block,
+        /// The successor taken when `cond` is false.
+        else_block: Block,
+    },
+}
+
+impl Terminator {
+    /// The blocks this terminator may transfer control to, in order.
+    #[must_use]
+    pub fn successors(&self) -> Vec<Block> {
+        match self {
+            Terminator::Ret(_) => Vec::new(),
+            Terminator::Br(target) => vec![*target],
+            Terminator::CondBr {
+                then_block,
+                else_block,
+                ..
+            } => vec![*then_block, *else_block],
+        }
+    }
 }
 
 /// The contents of a basic block: an ordered list of the values it computes,

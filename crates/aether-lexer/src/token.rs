@@ -25,6 +25,10 @@ pub enum TokenKind {
     True,
     /// The `false` boolean literal keyword.
     False,
+    /// The `if` keyword.
+    If,
+    /// The `else` keyword.
+    Else,
 
     /// A left parenthesis `(`.
     LParen,
@@ -86,6 +90,8 @@ impl TokenKind {
             Let => "keyword `let`",
             True => "keyword `true`",
             False => "keyword `false`",
+            If => "keyword `if`",
+            Else => "keyword `else`",
             LParen => "`(`",
             RParen => "`)`",
             LBrace => "`{`",
@@ -114,7 +120,13 @@ impl TokenKind {
     pub fn is_keyword(self) -> bool {
         matches!(
             self,
-            TokenKind::Fn | TokenKind::Return | TokenKind::Let | TokenKind::True | TokenKind::False
+            TokenKind::Fn
+                | TokenKind::Return
+                | TokenKind::Let
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::If
+                | TokenKind::Else
         )
     }
 }
@@ -128,6 +140,8 @@ pub(crate) fn keyword(lexeme: &str) -> Option<TokenKind> {
         "let" => Some(TokenKind::Let),
         "true" => Some(TokenKind::True),
         "false" => Some(TokenKind::False),
+        "if" => Some(TokenKind::If),
+        "else" => Some(TokenKind::Else),
         _ => None,
     }
 }
@@ -160,6 +174,8 @@ mod tests {
         assert_eq!(keyword("let"), Some(TokenKind::Let));
         assert_eq!(keyword("true"), Some(TokenKind::True));
         assert_eq!(keyword("false"), Some(TokenKind::False));
+        assert_eq!(keyword("if"), Some(TokenKind::If));
+        assert_eq!(keyword("else"), Some(TokenKind::Else));
     }
 
     #[test]

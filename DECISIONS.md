@@ -571,8 +571,56 @@ prematurely building the M8 type system.
 `a < b < c` is accepted syntactically and rejected only later by the verifier's
 type check rather than by a friendly non-associativity error (TD-0029); a nicer
 diagnostic awaits the type system. Unknown type *names* still fall back to `int`
-(TD-0021). Short-circuiting `&&`/`||` are intentionally deferred to slice 2b
+(TD-0021). Short-circuiting `&&`/`||` are intentionally deferred to slice 2c
 because their semantics require control flow. This introduces the runtime value
 enum called for by TD-0024, which is now resolved. These interpreter/type
 decisions are provisional and will be revisited when the type system (M8) and its
 overflow policy (ADR-0015/TD-0025) are formalized.
+
+---
+
+## ADR-0019 — Control flow: statement-form `if`/`else`, CFG lowering, dominance by availability
+
+**Status:** Accepted *(provisional; if-expressions and block-parameter merges arrive in slice 2c)*
+
+**Context.** M6 slice 2b adds the first control flow. Several sub-decisions arise:
+whether `if` is a statement or an expression, how lowering builds the CFG, how
+block scoping works, and how the verifier checks SSA validity once a function has
+more than one block.
+
+**Decisions.**
+- **`if`/`else` is a statement** (it produces no value). Both arms are blocks; an
+  `else` may be a block or a chained `if` (`else if`). *Rationale:* with immutable
+  `let` bindings and no assignment, a statement `if` never yields a value that must
+  merge at the join, so it needs neither block parameters nor the value-model
+  refactor (ADR-0017). This delivers real control flow in a focused, green slice.
+  The **expression** form — which *does* force a merge — is deferred to slice 2c
+  together with block parameters and short-circuit `&&`/`||`.
+- **CFG lowering.** Lowering tracks a "current block" and, per statement sequence,
+  whether control falls through or diverges (via `return`). An `if` splits into
+  `then`/`else`/join blocks wired by `condbr`/`br`. A join block is created only
+  when at least one arm falls through, so a both-arms-`return` `if` leaves no
+  unreachable block.
+- **Scoped environments.** The flat name map (TD-0027) becomes a stack of scopes;
+  each braced block pushes a scope, so branch-local bindings are invisible after
+  the `if` and shadowing is lexical.
+- **Dominance by availability.** The verifier checks "a definition dominates its
+  use" via a forward availability dataflow — the intersection, over a block's
+  predecessors, of the values each makes available — replacing the old
+  single-block index-order rule. Only reachable blocks are verified. This is
+  correct for arbitrary CFGs; a dedicated dominator-tree analysis (M10) will later
+  supersede the inline computation (TD-0030).
+
+**Alternatives considered.** *Expression-form `if` now* — rejected for this slice:
+it forces the block-parameter merge machinery, making the slice much larger; it is
+scheduled next (2c). *Phi/dominator-tree in the verifier* — the availability
+dataflow is simpler to implement correctly now and doubles as a gentle precursor
+to the M10 dataflow engine; a real dominator tree is deferred to the analysis
+framework.
+
+**Consequences.** Statement `if`/`else`, `else if`, and nesting all parse, lower,
+verify, and execute (the interpreter now follows the CFG). Resolves TD-0023
+(entry-only interpreter) and TD-0027 (flat scope). TD-0019 shrinks to just
+block-parameter merges (2c). If-expressions and `&&`/`||` remain deferred
+(TD-0029). A function that does not `return` on all paths still surfaces as a
+verifier "missing terminator" (TD-0020) until semantic analysis (M8).

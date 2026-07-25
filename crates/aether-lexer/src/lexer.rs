@@ -398,6 +398,16 @@ mod tests {
     }
 
     #[test]
+    fn control_flow_keywords() {
+        assert_eq!(kinds("if else"), vec![TokenKind::If, TokenKind::Else]);
+        // `ifx`/`elsewhere` are identifiers, not keywords.
+        assert_eq!(
+            kinds("ifx elsewhere"),
+            vec![TokenKind::Ident, TokenKind::Ident]
+        );
+    }
+
+    #[test]
     fn spans_track_byte_offsets() {
         let mut map = SourceMap::new();
         let id = map.add_file("test.ae", "  fn  x");

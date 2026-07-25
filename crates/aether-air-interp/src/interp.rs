@@ -78,28 +78,47 @@ pub fn interpret(module: &Module) -> Result<RunValue, RunError> {
 /// Execute a single function and return its result.
 ///
 /// Assumes `function` has passed [`aether_air::verify`](aether_air::verify): in
-/// particular, that its entry block is terminated, every operand is defined
-/// before use, and operand/result types are consistent.
+/// particular, that every reachable block is terminated, every operand's
+/// definition dominates its use, and operand/result types are consistent.
+///
+/// Execution walks the control-flow graph: it evaluates the current block's
+/// instructions, then follows its terminator to the next block (or returns).
+/// Values are dense across the whole function (`0..value_count`), so a single
+/// flat vector indexed by `Value` holds all results; dominance guarantees a
+/// value is computed before any block that reads it runs. With only `if`/`else`
+/// today the CFG is acyclic, so this loop always terminates.
 ///
 /// # Errors
 /// Returns a [`RunError`] if execution fails (e.g. division by zero).
 pub fn run_function(function: &Function) -> Result<RunValue, RunError> {
-    // Values are dense (0..value_count) and, within a single block, defined in
-    // execution order, so a flat vector indexed by `Value` suffices. The initial
-    // fill is a placeholder; every slot is written before it is read.
+    // The initial fill is a placeholder; every slot is written before it is read.
     let mut values = vec![RunValue::Int(0); function.value_count()];
-    let block = function.block(function.entry());
+    let mut current = function.entry();
 
-    for &value in &block.body {
-        let result = eval(function, &values, value)?;
-        values[value.index()] = result;
-    }
+    loop {
+        let block = function.block(current);
+        for &value in &block.body {
+            values[value.index()] = eval(function, &values, value)?;
+        }
 
-    let terminator = block
-        .terminator
-        .expect("interpreter requires a verified (terminated) function");
-    match terminator {
-        Terminator::Ret(value) => Ok(values[value.index()]),
+        match block
+            .terminator
+            .expect("interpreter requires a verified (terminated) function")
+        {
+            Terminator::Ret(value) => return Ok(values[value.index()]),
+            Terminator::Br(target) => current = target,
+            Terminator::CondBr {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                current = if values[cond.index()].as_bool() {
+                    then_block
+                } else {
+                    else_block
+                };
+            }
+        }
     }
 }
 
@@ -312,5 +331,73 @@ mod tests {
             run_val("fn main() -> bool { let ok = 10 >= 10; return ok; }"),
             Ok(RunValue::Bool(true))
         );
+    }
+
+    #[test]
+    fn if_else_takes_the_true_branch() {
+        assert_eq!(
+            run_str("fn main() -> int { if 1 < 2 { return 10; } else { return 20; } }"),
+            Ok(10)
+        );
+    }
+
+    #[test]
+    fn if_else_takes_the_false_branch() {
+        assert_eq!(
+            run_str("fn main() -> int { if 2 < 1 { return 10; } else { return 20; } }"),
+            Ok(20)
+        );
+    }
+
+    #[test]
+    fn if_without_else_falls_through() {
+        // Condition false: skip the then-block, fall through to the trailing return.
+        assert_eq!(
+            run_str("fn main() -> int { let x = 5; if x < 0 { return 1; } return x; }"),
+            Ok(5)
+        );
+        // Condition true: take the then-block.
+        assert_eq!(
+            run_str("fn main() -> int { let x = -5; if x < 0 { return 1; } return x; }"),
+            Ok(1)
+        );
+    }
+
+    #[test]
+    fn else_if_chain_selects_the_right_arm() {
+        let program = |n: i64| {
+            format!(
+                "fn main() -> int {{ let n = {n}; \
+                 if n < 0 {{ return 1; }} \
+                 else if n == 0 {{ return 2; }} \
+                 else {{ return 3; }} }}"
+            )
+        };
+        assert_eq!(run_str(&program(-4)), Ok(1));
+        assert_eq!(run_str(&program(0)), Ok(2));
+        assert_eq!(run_str(&program(7)), Ok(3));
+    }
+
+    #[test]
+    fn value_defined_before_if_is_usable_after() {
+        // `x` (defined in the entry) dominates the join and is returned there.
+        assert_eq!(
+            run_str(
+                "fn main() -> int { let x = 42; if true { let y = 1; } else { let z = 2; } return x; }"
+            ),
+            Ok(42)
+        );
+    }
+
+    #[test]
+    fn nested_ifs_execute_correctly() {
+        let src = "fn main() -> int { \
+             let a = 3; let b = 4; \
+             if a < b { \
+                 if a == 3 { return 100; } else { return 101; } \
+             } else { \
+                 return 200; \
+             } }";
+        assert_eq!(run_str(src), Ok(100));
     }
 }

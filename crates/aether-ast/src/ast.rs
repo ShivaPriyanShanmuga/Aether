@@ -78,6 +78,8 @@ pub enum Stmt {
     Let(LetStmt),
     /// A `return <expr>;` statement.
     Return(ReturnStmt),
+    /// An `if <cond> { … } [else …]` statement.
+    If(IfStmt),
 }
 
 impl Stmt {
@@ -87,6 +89,7 @@ impl Stmt {
         match self {
             Stmt::Let(l) => l.span,
             Stmt::Return(r) => r.span,
+            Stmt::If(i) => i.span,
         }
     }
 }
@@ -109,6 +112,33 @@ pub struct ReturnStmt {
     pub expr: Expr,
     /// The span from the `return` keyword to the semicolon.
     pub span: Span,
+}
+
+/// An `if <cond> { … } [else …]` statement.
+///
+/// `if` is a **statement** (it produces no value); an expression form is a
+/// planned addition (see ADR-0019). The optional `else` branch is either another
+/// block or a nested `if` (an `else if` chain), captured by [`ElseBranch`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IfStmt {
+    /// The condition; expected to be a boolean.
+    pub cond: Expr,
+    /// The block executed when the condition is true.
+    pub then_block: Block,
+    /// The optional `else` branch.
+    pub else_branch: Option<ElseBranch>,
+    /// The span from the `if` keyword to the end of the last branch.
+    pub span: Span,
+}
+
+/// The `else` branch of an [`IfStmt`]: either a block (`else { … }`) or a nested
+/// `if` (`else if …`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ElseBranch {
+    /// `else { … }`.
+    Block(Block),
+    /// `else if …` — a chained conditional.
+    If(Box<IfStmt>),
 }
 
 /// An expression.
