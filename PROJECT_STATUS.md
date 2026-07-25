@@ -2,8 +2,8 @@
 
 **Snapshot date:** 2026-07-25
 **Current phase:** Phase 1 — First Light
-**Current milestone:** M1 — Source & diagnostics infrastructure → ✅ **complete**
-**Next milestone:** M2 — Lexer
+**Current milestone:** M2 — Lexer → ✅ **complete**
+**Next milestone:** M3 — AST & parser
 
 This document is the first thing to read at the start of a session. It reflects
 the repository's actual state, which always takes precedence over any external
@@ -13,62 +13,74 @@ memory or conversation history.
 
 ## Completed milestones
 
+- **M2 — Lexer** ✅
+  - `aether-lexer`: a hand-written, character-based scanner. Payload-free `Copy`
+    `TokenKind` (text recovered from source via span), `Token { kind, span }`,
+    and `tokenize(&SourceFile) -> LexResult { tokens, diagnostics }`.
+  - Token set for the minimal language: identifiers, integer literals, keywords
+    `fn`/`return`, delimiters `( ) { }`, punctuation `; ,`, operators
+    `+ - * / ->`, line comments `//`, and an explicit `Eof`.
+  - Error recovery: an unexpected character emits a `Diagnostic` and scanning
+    continues. UTF-8-correct spans (multi-byte chars handled).
+  - `aetherc` now lexes input, surfaces lexical errors (new exit code `1`), and
+    has a `--dump-tokens` debug flag (first bit of compiler tooling).
+  - One ADR recorded (ADR-0010: payload-free tokens; interning deferred).
+  - Tests: **68 total, all passing** (+18 lexer unit + 1 lexer doctest, +3 driver).
 - **M1 — Source & diagnostics infrastructure** ✅
-  - `aether-source`: `BytePos`, `FileId`, `Span` (compact, `Copy`, private
-    representation behind accessors), `LineCol`, `SourceFile`, and `SourceMap`.
-    Byte-offset → 1-based line/column resolution via a precomputed line table
-    (binary search); UTF-8-aware column counting; CRLF-aware line text.
-  - `aether-diagnostics`: structured `Diagnostic` (severity, optional code,
-    primary/secondary labeled spans, notes) built with a fluent builder; a
-    `DiagnosticHandler` that buffers and counts; and a `render` function producing
-    rustc-style, caret-annotated, tab/UTF-8-aware plain-text output.
-  - `aetherc` now loads input into a real `SourceMap` and reports the
-    (still-unimplemented) pipeline through the real diagnostics renderer.
-  - Tests: **47 passing** (17 `aether-source`, 17 `aether-diagnostics` incl. 7
-    golden render tests + 1 doctest, 13 `aetherc`).
-  - Two ADRs recorded (span representation; diagnostics architecture).
+  - `aether-source` (`BytePos`, `FileId`, `Span`, `LineCol`, `SourceFile`,
+    `SourceMap`; byte→line/column via a line table; UTF-8/CRLF aware).
+  - `aether-diagnostics` (structured `Diagnostic` + fluent builder,
+    `DiagnosticHandler`, rustc-style caret `render`).
 - **M0 — Project foundation** ✅
   - Cargo workspace, pinned toolchain (Rust 1.89.0, edition 2024, resolver 3),
-    workspace-wide lint policy and formatting, GitHub Actions CI, MIT license.
-  - `aetherc` driver skeleton with a dependency-free CLI and distinct exit codes.
-  - The seven project-management documents authored and populated.
+    workspace lint policy, CI, MIT license, `aetherc` driver skeleton, and the
+    seven project-management documents.
 
 ---
 
 ## Current progress
 
-Milestone 1 is finished; the workspace builds, lints cleanly, and all tests pass.
+Milestone 2 is finished; the workspace builds, lints cleanly, and all tests pass.
 There is no in-progress work carried into the next session.
 
 **Verification (as of this snapshot):**
 - `cargo build --all-targets` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo fmt --all -- --check` — clean
-- `cargo test --all` — 47 passed, 0 failed
+- `cargo test --all` — 68 passed, 0 failed
+
+The full pipeline that exists today, exercised through the binary:
+`aetherc --dump-tokens file.ae` prints the token stream; an invalid character
+renders a caret diagnostic and exits `1`.
 
 ---
 
 ## Next recommended milestone
 
-**M2 — Lexer.**
+**M3 — AST & parser.**
 
-Introduce the `aether-lexer` crate: tokenize the minimal language into a spanned
-token stream. Rationale: with source and diagnostics in place, the lexer is the
-first real frontend phase and the first genuine consumer of both — every token
-carries a `Span`, and lexical errors are reported as `Diagnostic`s.
+Introduce `aether-ast` (spanned node definitions) and `aether-parser` (a
+recursive-descent parser with precedence-based expression parsing) for the
+minimal grammar. Rationale: the parser is the natural consumer of the token
+stream and produces the tree that AIR lowering (M4) will consume — the next link
+toward the first runnable program.
 
 Suggested scope:
-- Define the initial token set for the minimal language: identifiers, integer
-  literals, keywords (`fn`, `return`, and the `int` type to start), punctuation
-  and operators (`( ) { } ; , + - * / ->`), and end-of-file.
-- A `Token { kind, span }` model and a `Lexer` that turns `&SourceFile` (or
-  `&str` + `FileId`) into a token stream, skipping whitespace and comments.
-- Lexical error recovery: on an unexpected character, emit a `Diagnostic` and
-  continue, rather than aborting.
-- Likely introduce `aether-support` (or fold into the lexer for now) if string
-  interning for identifiers is warranted — decide when the need is concrete.
-- Unit tests for each token kind, span correctness, and error recovery; consider
-  a small snapshot/golden approach for token streams.
+- Grammar for the minimal language: `fn NAME(params) -> TYPE { stmts }`, a
+  `return <expr>;` statement, and an expression grammar covering integer
+  literals, identifiers, the binary operators `+ - * /` (with correct
+  precedence/associativity), unary minus, and parenthesized grouping.
+- `aether-ast`: node types (`Item`/`Fn`, `Stmt`, `Expr`, `Type`) each carrying a
+  `Span`. Decide node ownership strategy (arena vs `Box`) and record it as an ADR.
+- `aether-parser`: consumes `&[Token]` + the `SourceMap` (for lexeme text and
+  literal values), produces the AST, and reports syntax errors as `Diagnostic`s
+  with error recovery (e.g. synchronize on `;`/`}`).
+- Open decision to settle at the start: whether the parser stores identifier text
+  by span (continuing to defer interning) or introduces `aether-support` + a
+  `Session` with a string interner now. Recommendation stands to defer until name
+  resolution (M7) unless the parser reveals a concrete need.
+- Tests: unit tests for each production, precedence/associativity, error recovery,
+  and span correctness; consider a small AST pretty-printer for golden tests.
 
 Follow the standard workflow: review theory and alternatives, record decisions,
 plan, then implement — and leave the repository green with updated docs.
@@ -77,20 +89,20 @@ plan, then implement — and leave the repository green with updated docs.
 
 ## Architecture health
 
-**Green.** The pipeline's foundational layer is in place and cleanly separated:
-`aether-source` depends on nothing; `aether-diagnostics` depends only on
-`aether-source`; the driver sits on top. Boundaries hold, no cycles, no premature
-abstractions, no placeholder crates. A `Session`/context type is deliberately
-still deferred (see TECH_DEBT.md TD-0010) until interners and multiple phases
-justify it.
+**Green.** The frontend's first phases are in place with clean dependencies:
+`aether-source` (no deps) ← `aether-diagnostics` ← `aether-lexer`; the driver sits
+on top and wires them together. Boundaries hold, no cycles, no premature
+abstractions, no placeholder crates. The `Session`/context type and string
+interning remain deliberately deferred (TD-0010) — the payload-free token design
+means nothing needs them yet.
 
 ---
 
 ## Outstanding work / technical debt
 
-Nothing blocking. Known simplifications and future refinements are tracked in
-[`TECH_DEBT.md`](TECH_DEBT.md) — notably `Span` packing (TD-0006), multi-line
-diagnostic rendering (TD-0007), display-width columns (TD-0008), colored output
-(TD-0009), and the deferred `Session` type (TD-0010), plus the carry-overs from
-M0 (hand-rolled CLI → `clap`; `aetherc` pipeline still a stub until Phase 1
-completes).
+Nothing blocking. Tracked in [`TECH_DEBT.md`](TECH_DEBT.md): from M2 — ASCII-only
+identifiers (TD-0011), integer-literal limitations (TD-0012), no block comments
+(TD-0013), no error-code registry (TD-0014), and lexer peek re-slicing (TD-0015);
+plus carry-overs — `Span` packing (TD-0006), diagnostic rendering polish
+(TD-0007/8/9), the deferred `Session` (TD-0010), and the hand-rolled CLI →
+`clap` migration (TD-0001), now mildly more pressing as flags accumulate.

@@ -81,3 +81,50 @@ fn missing_file_is_an_io_error() {
         .expect("failed to run aetherc");
     assert_eq!(output.status.code(), Some(74));
 }
+
+#[test]
+fn dump_tokens_prints_stream_and_succeeds() {
+    // A distinct filename prefix avoids collisions with other temp-file tests,
+    // which run as parallel threads sharing one process id.
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_dump_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() { return 42; }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg("--dump-tokens")
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Fn"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("Ident"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("Eof"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn lexical_error_is_a_compile_error() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_lexerr_{}.ae", std::process::id()));
+    // `@` is not a valid token.
+    std::fs::write(&path, b"fn main() { @ }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected COMPILE_ERROR exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unexpected character"),
+        "stderr was:\n{stderr}"
+    );
+}

@@ -8,7 +8,12 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/aetherc", "crates/aether-source", "crates/aether-diagnostics"]
+members = [
+    "crates/aetherc",
+    "crates/aether-source",
+    "crates/aether-diagnostics",
+    "crates/aether-lexer",
+]
 
 # Shared package metadata. Member crates inherit these via `field.workspace = true`.
 [workspace.package]

@@ -100,7 +100,51 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
   `SourceMap` and `DiagnosticHandler` directly.
 - **Impact.** None yet; introducing it now would be premature abstraction.
 - **Trigger.** Introduce `Session` when a third shared component (e.g. a string
-  interner) and multiple phases need to thread the same state — likely M2.
+  interner) and multiple phases need to thread the same state. The payload-free
+  token design (ADR-0010) means M2 did not need it; reassess around name
+  resolution (M7).
+
+### TD-0011 — ASCII-only identifiers
+- **Severity:** low
+- **Context.** The lexer accepts `[A-Za-z_][A-Za-z0-9_]*`; non-ASCII letters are
+  rejected as unexpected characters.
+- **Impact.** No Unicode identifiers.
+- **Trigger.** If Unicode identifiers become desirable, adopt UAX #31 (XID_Start /
+  XID_Continue), e.g. via the `unicode-xid` crate.
+
+### TD-0012 — Integer literals are minimal
+- **Severity:** low
+- **Context.** An integer literal is a maximal run of ASCII digits. There is no
+  support for underscores (`1_000`), non-decimal bases (`0x`, `0b`, `0o`), and no
+  value/overflow checking (values are parsed later, per ADR-0010). `12ab` lexes as
+  an `Int` followed by an `Ident` rather than a malformed-number error.
+- **Impact.** Limited literal syntax; some malformed numbers are not flagged at
+  lex time.
+- **Trigger.** Extend literal syntax and add overflow diagnostics when the type
+  system/parser handle integer values (M3+).
+
+### TD-0013 — No block comments
+- **Severity:** low
+- **Context.** Only `//` line comments are recognized; `/* ... */` is not.
+- **Impact.** No block or doc comments.
+- **Trigger.** Add (nesting-aware) block comments when needed; decide on doc-comment
+  syntax at the same time.
+
+### TD-0014 — No diagnostic error-code registry
+- **Severity:** low
+- **Context.** Diagnostics support an optional code, but there is no central
+  registry, so lexer errors currently carry none.
+- **Impact.** No stable, documented error codes for users to look up.
+- **Trigger.** Introduce an error-code registry (with explanations) once there are
+  enough diagnostics across phases to warrant it.
+
+### TD-0015 — Lexer peek re-slices the source each call
+- **Severity:** low
+- **Context.** `peek`/`peek_second` do `self.src[self.pos..].chars().next()/nth(1)`,
+  re-slicing and decoding on every lookahead.
+- **Impact.** Redundant work (still `O(1)` per call); negligible at current scale.
+- **Trigger.** If lexing shows up in profiling, cache a `Chars`/`CharIndices`
+  iterator or a small lookahead buffer.
 
 ---
 

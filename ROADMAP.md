@@ -31,12 +31,13 @@ interpreter. This validates the whole architecture against a real program early.
   `aether-source` (`SourceMap`, `Span`, byte→line/column mapping) and
   `aether-diagnostics` (structured diagnostics + caret rendering). Reused by every
   later phase, so it came first.
-- **M2 — Lexer** ⬜ ← next
-  `aether-lexer`: tokenize the minimal language into a spanned token stream, with
-  lexical error recovery reported through diagnostics.
-- **M3 — AST & parser** ⬜
-  `aether-ast` (spanned node definitions) and `aether-parser` (recursive descent)
-  for the minimal grammar.
+- **M2 — Lexer** ✅
+  `aether-lexer`: tokenizes the minimal language into a spanned token stream
+  (payload-free `Copy` tokens) with lexical error recovery through diagnostics;
+  `aetherc` gained a `--dump-tokens` flag.
+- **M3 — AST & parser** ⬜ ← next
+  `aether-ast` (spanned node definitions) and `aether-parser` (recursive descent
+  with precedence-based expression parsing) for the minimal grammar.
 - **M4 — AIR core & lowering** ⬜
   `aether-air`: minimal typed SSA IR, builder, textual printer, and verifier;
   lower the AST into AIR.
@@ -114,4 +115,4 @@ add today's code.
 
 ## Next milestone
 
-**M2 — Lexer.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M3 — AST & parser.** See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).

@@ -71,7 +71,7 @@ below therefore distinguishes what exists today from what is planned.
 | `aether-source` | Source files, `Span`, byte↔line/column mapping | **exists** |
 | `aether-diagnostics` | Diagnostics: errors/warnings, caret rendering | **exists** |
 | `aether-support` | Shared primitives: arenas, interners, data structures | planned (as needed) |
-| `aether-lexer` | Lexical analysis → token stream | planned (M2) |
+| `aether-lexer` | Lexical analysis → token stream | **exists** |
 | `aether-ast` | AST node definitions | planned (M3) |
 | `aether-parser` | Recursive-descent parser → AST | planned (M3) |
 | `aether-air` | AIR data structures, builder, verifier, textual printer/parser | planned (M4) |

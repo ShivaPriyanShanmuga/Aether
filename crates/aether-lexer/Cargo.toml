@@ -1,0 +1,15 @@
+[package]
+name = "aether-lexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Lexical analysis (tokenizer) for the Aether language."
+
+[dependencies]
+aether-source = { path = "../aether-source" }
+aether-diagnostics = { path = "../aether-diagnostics" }
+
+[lints]
+workspace = true

@@ -235,3 +235,38 @@ the phases that emit diagnostics.
 color output (TD-0009) and richer multi-line/label-grouped rendering (TD-0007) are
 deferred. `aether-diagnostics` depends on `aether-source` (to resolve spans),
 consistent with the dependency rules in `ARCHITECTURE.md`.
+
+---
+
+## ADR-0010 — Tokens are payload-free; string interning is deferred
+
+**Status:** Accepted
+
+**Context.** The lexer's output representation shapes the parser and, indirectly,
+name resolution. A recurring question is whether tokens should carry their text or
+value, and whether to introduce string interning (and a `Session` to own the
+interner) now.
+
+**Alternatives considered.**
+- **Tokens carry owned data** (`Ident(String)`, `Int(u64)`) — self-contained, but
+  tokens become non-`Copy` and allocate, and value parsing/overflow handling gets
+  baked into the lexer.
+- **Tokens carry an interned `Symbol`** (rustc) — fast identifier comparison, but
+  requires standing up an interner and a `Session` immediately, before any
+  consumer needs fast symbol comparison.
+- **Payload-free tokens** — `TokenKind` is a `Copy` enum; the lexeme is recovered
+  from the source via the token's span.
+
+**Decision.** Use **payload-free tokens**. `TokenKind` carries no text or value;
+identifier text and integer values are recovered from the source via the span.
+
+**Rationale.** Tokens stay tiny and `Copy` (trivial to peek/clone in the parser),
+and a token's *shape* is cleanly separated from its *value*. Crucially, the lexer
+then needs **no string interning**, so the interner and the `Session` type can be
+deferred until name resolution (M7) actually benefits from fast symbol comparison
+— avoiding a premature abstraction (TD-0010).
+
+**Consequences.** The parser recovers identifier text and parses integer values
+from span text (via the `SourceMap`). Integer-literal validation (overflow, bases,
+underscores) therefore happens at or after parsing, not during lexing (TD-0012).
+When interning is introduced, it will likely arrive together with the `Session`.
