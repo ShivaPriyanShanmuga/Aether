@@ -106,8 +106,8 @@ plan, then implement — and leave the repository green with updated docs.
 
 ## Architecture health
 
-**Green.** Eight crates, clean one-directional dependencies. `aether-lower` now
-also depends on `aether-diagnostics` (a foundational crate — allowed by the
+**Green.** Nine crates (eight libraries plus the `aetherc` binary), clean
+one-directional dependencies. `aether-lower` now also depends on `aether-diagnostics` (a foundational crate — allowed by the
 dependency rules) because it performs provisional name resolution. No cycles, no
 placeholder crates. The one deliberate smudge — resolution living in lowering
 (ADR-0016) — is tracked (TD-0026) with a clear exit (a dedicated pass at M9).
