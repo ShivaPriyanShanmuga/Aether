@@ -136,7 +136,9 @@ exists**. The design is:
   merge mechanism (block parameters, not phi nodes; ADR-0017/0020). Functions have
   multiple blocks connected by `br`/`condbr` terminators, each edge carrying
   arguments for its target's parameters. Values live in a unified table addressed
-  by `Value`.
+  by `Value`. A **function's parameters are its entry block's parameters**, bound
+  from a `call`'s arguments the same way (ADR-0021); a `call` references its callee
+  by name until name resolution (M7).
 - **id/arena representation** — a `Function` owns flat arenas of instructions
   (addressed by `Value`) and blocks (addressed by `Block`), the deliberate
   counterpart to the AST's `Box` tree (ADR-0011). This gives stable ids, side

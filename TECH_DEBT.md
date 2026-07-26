@@ -166,13 +166,12 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Trigger.** Add a configurable nesting-depth limit that emits a diagnostic
   before the stack is exhausted; relevant once untrusted input is a concern.
 
-### TD-0018 — No function parameters
+### TD-0018 — No function parameters — ✅ resolved (M6 slice 3)
 - **Severity:** low
-- **Context.** The grammar accepts only an empty parameter list `()`; parameter
-  syntax (`name: type`) needs a `:` token the lexer does not yet have.
-- **Impact.** Functions cannot take arguments.
-- **Trigger.** Add the `:` token and parameter parsing (with an AST `Param` type)
-  during language expansion (M6).
+- **Context.** The grammar originally accepted only an empty parameter list `()`.
+- **Resolution.** M6 slice 3 (ADR-0021) added the `:` token, an AST `Param` type,
+  parameter parsing, and lowering of parameters to entry-block parameters, plus a
+  `call` instruction. See the Resolved items section.
 
 ### TD-0019 — No SSA merges (block parameters) yet — ✅ resolved (M6 slice 2c)
 - **Severity:** medium
@@ -242,13 +241,14 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 
 ### TD-0026 — Name resolution is done in lowering
 - **Severity:** medium
-- **Context.** Per ADR-0016, `aether-lower` resolves identifiers to `let` bindings
-  via a name → value environment and emits "cannot find name" diagnostics itself.
+- **Context.** Per ADR-0016/0021, `aether-lower` resolves identifiers to `let`
+  bindings and parameters, and resolves call targets to functions, emitting
+  "cannot find …" diagnostics itself.
 - **Impact.** Lowering mixes a semantic concern (resolution) with translation, and
   is fallible as a result.
-- **Trigger.** Introduce a dedicated name-resolution pass (M9) that resolves names
-  (and enforces scope rules) ahead of lowering; lowering then assumes resolved
-  names and becomes infallible again.
+- **Trigger.** Introduce a dedicated name-resolution pass (M7) that resolves names
+  and call targets (and enforces scope rules) ahead of lowering; lowering then
+  assumes resolved names and becomes infallible again.
 
 ### TD-0027 — Variable scope is a single flat environment — ✅ resolved (M6 slice 2b)
 - **Severity:** low
@@ -256,7 +256,7 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **Resolution.** Lowering now uses a stack of scopes (each braced block pushes
   one), giving lexical block scoping and shadowing: a branch-local `let` is
   invisible after the `if`, and name resolution searches innermost outward.
-  Formal shadowing rules move to name resolution (M9). See the Resolved items
+  Formal shadowing rules move to name resolution (M7). See the Resolved items
   section.
 
 ### TD-0028 — `let` has no type annotation
@@ -284,6 +284,17 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
   design; the block-parameter merge machinery it needs already exists, ADR-0020).
   Make comparisons non-associative (a targeted diagnostic) with the type system
   (M8), or sooner if worthwhile.
+
+### TD-0031 — Interpreter recursion uses the host stack
+- **Severity:** low
+- **Context.** A `call` runs the callee in a fresh frame by recursively invoking
+  `run_function`, so Aether-level recursion consumes host (Rust) stack frames.
+  Duplicate function names are also not diagnosed yet (first declaration wins).
+- **Impact.** Deeply recursive Aether programs can overflow the host stack and
+  crash the interpreter rather than reporting a clean error.
+- **Trigger.** If it matters, add a recursion/frame-depth limit that yields a
+  runtime error, or convert to an explicit interpreter stack. Diagnose duplicate
+  function names in name resolution/semantics (M7/M8).
 
 ### TD-0030 — Verifier recomputes dominance inline
 - **Severity:** low
@@ -315,3 +326,6 @@ Each item notes its **impact**, the **trigger** that should prompt action, and a
 - **TD-0019 — No SSA merges (block parameters).** Resolved in M6 slice 2c
   (ADR-0020): a unified value table plus branch arguments implement block
   parameters, exercised by short-circuit `&&`/`||`.
+- **TD-0018 — No function parameters.** Resolved in M6 slice 3 (ADR-0021): the
+  `:` token, an AST `Param`, parameter parsing, function parameters lowered to
+  entry-block parameters, and a `call` instruction — with recursion.

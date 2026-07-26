@@ -147,7 +147,9 @@ impl Block {
 }
 
 /// The operation an instruction performs. Payload operands are [`Value`]s.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// Not `Copy`: [`InstData::Call`] carries an owned callee name and argument list.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum InstData {
     /// An integer constant.
     IConst(i64),
@@ -177,6 +179,17 @@ pub enum InstData {
         lhs: Value,
         /// The right operand.
         rhs: Value,
+    },
+    /// A call to another function by name, producing its return value.
+    ///
+    /// The callee is referenced by name (provisional, ADR-0021): resolution lives
+    /// in lowering until the dedicated name-resolution pass (M9). The arguments
+    /// bind the callee's entry-block parameters.
+    Call {
+        /// The called function's name.
+        callee: String,
+        /// The argument values, in order.
+        args: Vec<Value>,
     },
 }
 
@@ -325,6 +338,21 @@ impl Function {
         id
     }
 
+    /// Append a **function** parameter of type `ty`, returning the [`Value`] it
+    /// defines. A function's parameters are the parameters of its entry block,
+    /// bound from a call's arguments just as block parameters are bound from a
+    /// branch's arguments (ADR-0021). This is a convenience over
+    /// [`append_block_param`](Function::append_block_param) on the entry block.
+    pub fn append_param(&mut self, ty: Type, span: Span) -> Value {
+        self.append_block_param(self.entry, ty, span)
+    }
+
+    /// The function's parameters (the entry block's parameters), in order.
+    #[must_use]
+    pub fn params(&self) -> &[Value] {
+        &self.blocks[self.entry.index()].params
+    }
+
     /// Append a parameter of type `ty` to `block`, returning the [`Value`] it
     /// defines. Predecessors supply a matching argument on each edge into `block`.
     pub fn append_block_param(&mut self, block: Block, ty: Type, span: Span) -> Value {
@@ -420,6 +448,14 @@ impl Module {
     #[must_use]
     pub fn functions(&self) -> &[Function] {
         &self.functions
+    }
+
+    /// The function with the given name, if any. Used to resolve calls until a
+    /// dedicated name-resolution pass turns callee names into direct references
+    /// (M9); a linear scan is adequate at current scale.
+    #[must_use]
+    pub fn function_by_name(&self, name: &str) -> Option<&Function> {
+        self.functions.iter().find(|f| f.name == name)
     }
 }
 

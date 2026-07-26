@@ -70,45 +70,49 @@ pub enum RunError {
 /// such as [`RunError::DivisionByZero`] if execution fails.
 pub fn interpret(module: &Module) -> Result<RunValue, RunError> {
     let main = module
-        .functions()
-        .iter()
-        .find(|function| function.name == "main")
+        .function_by_name("main")
         .ok_or(RunError::NoEntryPoint)?;
-    run_function(main)
+    run_function(module, main, &[])
 }
 
-/// Execute a single function and return its result.
+/// Execute `function` within `module` with the given argument values (which bind
+/// its entry-block parameters), returning its result.
 ///
-/// Assumes `function` has passed [`aether_air::verify`](aether_air::verify): in
-/// particular, that every reachable block is terminated, every operand's
-/// definition dominates its use, and operand/result types are consistent.
+/// Assumes the module has passed [`aether_air::verify`](aether_air::verify): every
+/// reachable block is terminated, every operand's definition dominates its use,
+/// operand/result types are consistent, and every call names an existing function
+/// with matching arguments.
 ///
-/// Execution walks the control-flow graph: it evaluates the current block's
-/// instructions, then follows its terminator to the next block (or returns).
-/// Values are dense across the whole function (`0..value_count`), so a single
-/// flat vector indexed by `Value` holds all results; dominance guarantees a
-/// value is computed before any block that reads it runs. With only `if`/`else`
-/// today the CFG is acyclic, so this loop always terminates.
+/// Execution walks the control-flow graph: it binds the current block's
+/// parameters, evaluates its instructions, then follows its terminator to the
+/// next block (or returns). A `call` runs the callee in a fresh frame (recursion
+/// uses the host stack — deep recursion can overflow it, TD-0031). Values are
+/// dense across the function (`0..value_count`), so a single flat vector indexed
+/// by `Value` holds all results.
 ///
 /// # Errors
-/// Returns a [`RunError`] if execution fails (e.g. division by zero).
-pub fn run_function(function: &Function) -> Result<RunValue, RunError> {
+/// Returns a [`RunError`] if execution fails (e.g. division by zero), including
+/// errors propagated out of called functions.
+pub fn run_function(
+    module: &Module,
+    function: &Function,
+    args: &[RunValue],
+) -> Result<RunValue, RunError> {
     // The initial fill is a placeholder; every slot is written before it is read.
     let mut values = vec![RunValue::Int(0); function.value_count()];
     let mut current = function.entry();
-    // Arguments supplied by the edge taken into the current block; empty for the
-    // entry (functions have no parameters yet).
-    let mut incoming: Vec<RunValue> = Vec::new();
+    // Arguments supplied to the block being entered: the call's arguments bind the
+    // entry block's parameters; thereafter, a branch's arguments bind its target's.
+    let mut incoming: Vec<RunValue> = args.to_vec();
 
     loop {
         let block = function.block(current);
 
-        // Bind the block's parameters from the arguments the taken edge supplied.
         for (&param, &arg) in block.params.iter().zip(&incoming) {
             values[param.index()] = arg;
         }
         for &value in &block.body {
-            values[value.index()] = eval(function, &values, value)?;
+            values[value.index()] = eval(module, function, &values, value)?;
         }
 
         match block
@@ -144,18 +148,23 @@ fn eval_args(target: &BranchTarget, values: &[RunValue]) -> Vec<RunValue> {
 }
 
 /// Evaluate the instruction that defines `value`, given the results computed so
-/// far.
-fn eval(function: &Function, values: &[RunValue], value: Value) -> Result<RunValue, RunError> {
+/// far. Matched by reference: `InstData` is not `Copy` (a `Call` owns its operands).
+fn eval(
+    module: &Module,
+    function: &Function,
+    values: &[RunValue],
+    value: Value,
+) -> Result<RunValue, RunError> {
     let data = match function.value_def(value) {
-        ValueDef::Inst(data) => *data,
+        ValueDef::Inst(data) => data,
         // Only instruction results are evaluated; parameters are bound from edges.
         ValueDef::Param { .. } => {
             unreachable!("block parameters are bound on entry, not evaluated")
         }
     };
     match data {
-        InstData::IConst(n) => Ok(RunValue::Int(n)),
-        InstData::BConst(b) => Ok(RunValue::Bool(b)),
+        InstData::IConst(n) => Ok(RunValue::Int(*n)),
+        InstData::BConst(b) => Ok(RunValue::Bool(*b)),
         InstData::Unary { op, operand } => {
             let x = values[operand.index()];
             Ok(match op {
@@ -196,6 +205,14 @@ fn eval(function: &Function, values: &[RunValue], value: Value) -> Result<RunVal
                 CmpOp::Ge => a.as_int() >= b.as_int(),
             };
             Ok(RunValue::Bool(result))
+        }
+        InstData::Call { callee, args } => {
+            let callee_fn = module
+                .function_by_name(callee)
+                .expect("verified AIR: the callee exists");
+            let arg_values: Vec<RunValue> = args.iter().map(|&a| values[a.index()]).collect();
+            // A fresh frame; any runtime error propagates out of the call.
+            run_function(module, callee_fn, &arg_values)
         }
     }
 }
@@ -489,5 +506,53 @@ mod tests {
                  return 200; \
              } }";
         assert_eq!(run_str(src), Ok(100));
+    }
+
+    #[test]
+    fn calls_a_function_with_arguments() {
+        assert_eq!(
+            run_str(
+                "fn add(a: int, b: int) -> int { return a + b; } fn main() -> int { return add(2, 3); }"
+            ),
+            Ok(5)
+        );
+    }
+
+    #[test]
+    fn nested_calls_evaluate_inside_out() {
+        assert_eq!(
+            run_str(
+                "fn double(x: int) -> int { return x * 2; } fn main() -> int { return double(double(3)); }"
+            ),
+            Ok(12)
+        );
+    }
+
+    #[test]
+    fn recursion_computes_factorial() {
+        let src = "fn fact(n: int) -> int { \
+             if n <= 1 { return 1; } \
+             return n * fact(n - 1); \
+         } \
+         fn main() -> int { return fact(5); }";
+        assert_eq!(run_str(src), Ok(120));
+    }
+
+    #[test]
+    fn a_boolean_argument_flows_through_a_call() {
+        assert_eq!(
+            run_val(
+                "fn not2(b: bool) -> bool { return !b; } fn main() -> bool { return not2(true); }"
+            ),
+            Ok(RunValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn runtime_error_propagates_out_of_a_call() {
+        assert!(matches!(
+            run_str("fn boom() -> int { return 1 / 0; } fn main() -> int { return boom(); }"),
+            Err(RunError::DivisionByZero { .. })
+        ));
     }
 }

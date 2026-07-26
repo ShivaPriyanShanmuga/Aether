@@ -41,12 +41,12 @@ pub struct VerifyError {
 pub fn verify(module: &Module) -> Vec<VerifyError> {
     let mut errors = Vec::new();
     for function in module.functions() {
-        verify_function(function, &mut errors);
+        verify_function(module, function, &mut errors);
     }
     errors
 }
 
-fn verify_function(function: &Function, errors: &mut Vec<VerifyError>) {
+fn verify_function(module: &Module, function: &Function, errors: &mut Vec<VerifyError>) {
     let error = |errors: &mut Vec<VerifyError>, msg: String| {
         errors.push(VerifyError {
             message: format!("function `{}`: {msg}", function.name),
@@ -73,7 +73,7 @@ fn verify_function(function: &Function, errors: &mut Vec<VerifyError>) {
             defined.insert(param);
         }
         for &value in &block.body {
-            check_inst(function, value, &defined, errors, &error);
+            check_inst(module, function, value, &defined, errors, &error);
             defined.insert(value);
         }
 
@@ -371,6 +371,7 @@ fn terminator_operand_type(
 /// type agreement between its operands and its result. `defined` is the set of
 /// values available at this instruction.
 fn check_inst(
+    module: &Module,
     function: &Function,
     value: Value,
     defined: &HashSet<Value>,
@@ -378,33 +379,37 @@ fn check_inst(
     error: &impl Fn(&mut Vec<VerifyError>, String),
 ) {
     let result = function.value_type(value);
-    let data = match function.value_def(value) {
-        ValueDef::Inst(data) => *data,
+    // Matched by reference: `InstData` is not `Copy` (a `Call` owns its operands).
+    match function.value_def(value) {
         // Block parameters live in the block header, not the body, so this is
         // unreachable for a well-formed function; their type is intrinsic.
-        ValueDef::Param { .. } => return,
-    };
-    match data {
-        InstData::IConst(_) => check_result(result, Type::Int, value, errors, error),
-        InstData::BConst(_) => check_result(result, Type::Bool, value, errors, error),
-        InstData::Unary { op, operand } => {
+        ValueDef::Param { .. } => {}
+        ValueDef::Inst(InstData::IConst(_)) => {
+            check_result(result, Type::Int, value, errors, error)
+        }
+        ValueDef::Inst(InstData::BConst(_)) => {
+            check_result(result, Type::Bool, value, errors, error)
+        }
+        ValueDef::Inst(InstData::Unary { op, operand }) => {
             let (operand_ty, result_ty) = match op {
                 UnaryOp::Neg => (Type::Int, Type::Int),
                 UnaryOp::Not => (Type::Bool, Type::Bool),
             };
-            require_operand_type(function, value, operand, operand_ty, defined, errors, error);
+            require_operand_type(
+                function, value, *operand, operand_ty, defined, errors, error,
+            );
             check_result(result, result_ty, value, errors, error);
         }
-        InstData::Binary { lhs, rhs, .. } => {
-            require_operand_type(function, value, lhs, Type::Int, defined, errors, error);
-            require_operand_type(function, value, rhs, Type::Int, defined, errors, error);
+        ValueDef::Inst(InstData::Binary { lhs, rhs, .. }) => {
+            require_operand_type(function, value, *lhs, Type::Int, defined, errors, error);
+            require_operand_type(function, value, *rhs, Type::Int, defined, errors, error);
             check_result(result, Type::Int, value, errors, error);
         }
-        InstData::ICmp { op, lhs, rhs } => {
+        ValueDef::Inst(InstData::ICmp { op, lhs, rhs }) => {
             if op.is_equality() {
                 // `==`/`!=` accept any single type, but both sides must agree.
-                let lhs_ty = operand_type(function, value, lhs, defined, errors, error);
-                let rhs_ty = operand_type(function, value, rhs, defined, errors, error);
+                let lhs_ty = operand_type(function, value, *lhs, defined, errors, error);
+                let rhs_ty = operand_type(function, value, *rhs, defined, errors, error);
                 if let (Some(l), Some(r)) = (lhs_ty, rhs_ty)
                     && l != r
                 {
@@ -421,12 +426,79 @@ fn check_inst(
                 }
             } else {
                 // Relational comparisons require integer operands.
-                require_operand_type(function, value, lhs, Type::Int, defined, errors, error);
-                require_operand_type(function, value, rhs, Type::Int, defined, errors, error);
+                require_operand_type(function, value, *lhs, Type::Int, defined, errors, error);
+                require_operand_type(function, value, *rhs, Type::Int, defined, errors, error);
             }
             check_result(result, Type::Bool, value, errors, error);
         }
+        ValueDef::Inst(InstData::Call { callee, args }) => {
+            check_call(
+                module, function, value, callee, args, defined, errors, error,
+            );
+        }
     }
+}
+
+/// Check a call: the callee exists, the argument count and types match its
+/// parameters, each argument dominates the call, and the result type is the
+/// callee's return type.
+#[allow(clippy::too_many_arguments)]
+fn check_call(
+    module: &Module,
+    function: &Function,
+    value: Value,
+    callee: &str,
+    args: &[Value],
+    defined: &HashSet<Value>,
+    errors: &mut Vec<VerifyError>,
+    error: &impl Fn(&mut Vec<VerifyError>, String),
+) {
+    let Some(callee_fn) = module.function_by_name(callee) else {
+        error(
+            errors,
+            format!("{} calls unknown function `{callee}`", value_ref(value)),
+        );
+        return;
+    };
+
+    let params = callee_fn.params();
+    if args.len() != params.len() {
+        error(
+            errors,
+            format!(
+                "{} calls `{callee}` with {} argument(s) but it takes {}",
+                value_ref(value),
+                args.len(),
+                params.len()
+            ),
+        );
+    }
+
+    for (&arg, &param) in args.iter().zip(params) {
+        if let Some(arg_ty) = operand_type(function, value, arg, defined, errors, error) {
+            let param_ty = callee_fn.value_type(param);
+            if arg_ty != param_ty {
+                error(
+                    errors,
+                    format!(
+                        "{} passes {} of type {} to `{callee}` parameter of type {}",
+                        value_ref(value),
+                        value_ref(arg),
+                        arg_ty.name(),
+                        param_ty.name()
+                    ),
+                );
+            }
+        }
+    }
+
+    check_result(
+        function.value_type(value),
+        callee_fn.return_type,
+        value,
+        errors,
+        error,
+    );
 }
 
 /// Validate that `operand` (used by `user`) is defined and that its definition
@@ -867,6 +939,115 @@ mod tests {
         assert!(
             errors.iter().any(|e| e.message.contains("branch argument")),
             "expected an argument-type error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn valid_call_verifies() {
+        let s = span();
+        let mut m = Module::new();
+        // fn id(%0: int) -> int { ret %0 }
+        let mut id = Function::new("id", Type::Int);
+        let p = id.append_param(Type::Int, s);
+        id.set_terminator(id.entry(), Terminator::Ret(p));
+        m.add_function(id);
+        // fn main() -> int { %0 = 7; %1 = call id(%0); ret %1 }
+        let mut main = Function::new("main", Type::Int);
+        let entry = main.entry();
+        let seven = main.push_inst(entry, InstData::IConst(7), Type::Int, s);
+        let call = main.push_inst(
+            entry,
+            InstData::Call {
+                callee: "id".to_string(),
+                args: vec![seven],
+            },
+            Type::Int,
+            s,
+        );
+        main.set_terminator(entry, Terminator::Ret(call));
+        m.add_function(main);
+
+        assert!(verify(&m).is_empty(), "{:?}", verify(&m));
+    }
+
+    #[test]
+    fn call_to_unknown_function_is_caught() {
+        let s = span();
+        let mut f = Function::new("main", Type::Int);
+        let entry = f.entry();
+        let call = f.push_inst(
+            entry,
+            InstData::Call {
+                callee: "nope".to_string(),
+                args: vec![],
+            },
+            Type::Int,
+            s,
+        );
+        f.set_terminator(entry, Terminator::Ret(call));
+
+        let errors = verify(&module_with(f));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("unknown function")),
+            "expected an unknown-function error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn call_argument_arity_and_type_are_checked() {
+        let s = span();
+        // Callee takes one int.
+        let mut id = Function::new("id", Type::Int);
+        let p = id.append_param(Type::Int, s);
+        id.set_terminator(id.entry(), Terminator::Ret(p));
+
+        // Wrong arity: pass zero arguments.
+        let mut arity = Function::new("main", Type::Int);
+        let entry = arity.entry();
+        let call = arity.push_inst(
+            entry,
+            InstData::Call {
+                callee: "id".to_string(),
+                args: vec![],
+            },
+            Type::Int,
+            s,
+        );
+        arity.set_terminator(entry, Terminator::Ret(call));
+        let mut m = Module::new();
+        m.add_function(id.clone());
+        m.add_function(arity);
+        assert!(
+            verify(&m).iter().any(|e| e.message.contains("argument(s)")),
+            "expected an arity error: {:?}",
+            verify(&m)
+        );
+
+        // Wrong type: pass a bool.
+        let mut typ = Function::new("main2", Type::Int);
+        let entry = typ.entry();
+        let b = typ.push_inst(entry, InstData::BConst(true), Type::Bool, s);
+        let call = typ.push_inst(
+            entry,
+            InstData::Call {
+                callee: "id".to_string(),
+                args: vec![b],
+            },
+            Type::Int,
+            s,
+        );
+        typ.set_terminator(entry, Terminator::Ret(call));
+        let mut m2 = Module::new();
+        m2.add_function(id);
+        m2.add_function(typ);
+        assert!(
+            verify(&m2)
+                .iter()
+                .any(|e| e.message.contains("parameter of type")),
+            "expected an argument-type error: {:?}",
+            verify(&m2)
         );
     }
 

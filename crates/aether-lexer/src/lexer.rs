@@ -116,6 +116,7 @@ impl<'src> Lexer<'src> {
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
             ';' => TokenKind::Semicolon,
+            ':' => TokenKind::Colon,
             ',' => TokenKind::Comma,
             '+' => TokenKind::Plus,
             '*' => TokenKind::Star,
@@ -419,6 +420,14 @@ mod tests {
     #[test]
     fn logical_and_or_operators() {
         assert_eq!(kinds("&& ||"), vec![TokenKind::AmpAmp, TokenKind::PipePipe]);
+    }
+
+    #[test]
+    fn colon_token() {
+        assert_eq!(
+            kinds("a : int"),
+            vec![TokenKind::Ident, TokenKind::Colon, TokenKind::Ident]
+        );
     }
 
     #[test]

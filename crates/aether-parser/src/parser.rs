@@ -1,8 +1,8 @@
 //! The recursive-descent parser with Pratt expression parsing.
 
 use aether_ast::{
-    BinOp, Block, ElseBranch, Expr, FnDecl, Ident, IfStmt, Item, LetStmt, Program, ReturnStmt,
-    Stmt, Type, UnOp,
+    BinOp, Block, ElseBranch, Expr, FnDecl, Ident, IfStmt, Item, LetStmt, Param, Program,
+    ReturnStmt, Stmt, Type, UnOp,
 };
 use aether_diagnostics::Diagnostic;
 use aether_lexer::{Token, TokenKind};
@@ -150,13 +150,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a function: `fn NAME() -> TYPE { ... }`. Assumes the current token
-    /// is `fn`.
+    /// Parse a function: `fn NAME(PARAMS) -> TYPE { ... }`. Assumes the current
+    /// token is `fn`.
     fn parse_fn(&mut self) -> Option<FnDecl> {
         let fn_span = self.bump().span; // `fn`
         let name = self.parse_ident()?;
         self.expect(TokenKind::LParen)?;
-        // Parameters are not supported yet: only an empty list is accepted.
+        let params = self.parse_params()?;
         self.expect(TokenKind::RParen)?;
         self.expect(TokenKind::Arrow)?;
         let return_type = self.parse_type()?;
@@ -164,10 +164,30 @@ impl<'a> Parser<'a> {
         let span = fn_span.to(body.span);
         Some(FnDecl {
             name,
+            params,
             return_type,
             body,
             span,
         })
+    }
+
+    /// Parse a comma-separated parameter list `name: type, …` up to (but not
+    /// consuming) the closing `)`. A trailing comma is allowed.
+    fn parse_params(&mut self) -> Option<Vec<Param>> {
+        let mut params = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            let name = self.parse_ident()?;
+            self.expect(TokenKind::Colon)?;
+            let ty = self.parse_type()?;
+            let span = name.span.to(ty.span());
+            params.push(Param { name, ty, span });
+            if self.at(TokenKind::Comma) {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        Some(params)
     }
 
     fn parse_ident(&mut self) -> Option<Ident> {
@@ -361,9 +381,14 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Ident => {
                 let token = self.bump();
-                Expr::Name {
-                    name: self.lexeme(token.span).to_string(),
-                    span: token.span,
+                let name = self.lexeme(token.span).to_string();
+                if self.at(TokenKind::LParen) {
+                    self.parse_call(name, token.span)
+                } else {
+                    Expr::Name {
+                        name,
+                        span: token.span,
+                    }
                 }
             }
             _ => {
@@ -374,6 +399,29 @@ impl<'a> Parser<'a> {
                 );
                 Expr::Error { span: token.span }
             }
+        }
+    }
+
+    /// Parse a call's argument list, given the already-parsed callee `name` and
+    /// its `callee_span`. Assumes the current token is `(`.
+    fn parse_call(&mut self, name: String, callee_span: Span) -> Expr {
+        self.bump(); // `(`
+        let mut args = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
+            args.push(self.parse_expr(0));
+            if self.at(TokenKind::Comma) {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        let close = self
+            .expect(TokenKind::RParen)
+            .unwrap_or_else(|| self.peek().span);
+        Expr::Call {
+            callee: name,
+            args,
+            span: callee_span.to(close),
         }
     }
 
@@ -766,6 +814,64 @@ Program
             Name \"c\"
             Name \"d\""
         );
+    }
+
+    #[test]
+    fn parses_function_parameters() {
+        let tree = parse_ok("fn add(a: int, b: int) -> int { return a + b; }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"add\" -> \"int\"
+    Param \"a\" \"int\"
+    Param \"b\" \"int\"
+    Block
+      Return
+        Binary +
+          Name \"a\"
+          Name \"b\""
+        );
+    }
+
+    #[test]
+    fn parses_a_call_expression() {
+        let tree = parse_ok("fn main() -> int { return add(1, 2); }");
+        assert_eq!(
+            tree,
+            "\
+Program
+  Fn \"main\" -> \"int\"
+    Block
+      Return
+        Call \"add\"
+          IntLit 1
+          IntLit 2"
+        );
+    }
+
+    #[test]
+    fn parses_nested_and_zero_arg_calls() {
+        let tree = parse_ok("fn main() -> int { return f(g(x), h()); }");
+        // `f` has two args: a call `g(x)` and a zero-arg call `h()`.
+        assert!(tree.contains("Call \"f\""));
+        assert!(tree.contains("Call \"g\""));
+        assert!(tree.contains("Call \"h\""));
+        assert!(tree.contains("Name \"x\""));
+    }
+
+    #[test]
+    fn call_versus_bare_name() {
+        // `x` alone is a Name; `x(...)` is a Call.
+        let tree = parse_ok("fn main() -> int { let y = x; return y; }");
+        assert!(tree.contains("Name \"x\""));
+        assert!(!tree.contains("Call"));
+    }
+
+    #[test]
+    fn param_missing_colon_reports() {
+        let (_tree, diags) = parse_str("fn f(a int) -> int { return a; }");
+        assert!(diags.iter().any(|d| d.message.contains("expected `:`")));
     }
 
     #[test]

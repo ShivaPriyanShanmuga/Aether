@@ -33,16 +33,30 @@ pub fn print(module: &Module) -> String {
 }
 
 fn print_function(out: &mut String, function: &Function) {
+    // A function's parameters are its entry block's parameters, shown here in the
+    // signature (and therefore suppressed on the entry block header below).
+    let params: Vec<String> = function
+        .params()
+        .iter()
+        .map(|&p| format!("{}: {}", value_ref(p), function.value_type(p).name()))
+        .collect();
     // Writing to a String is infallible; the `let _` acknowledges the Result.
     let _ = write!(
         out,
-        "fn {}() -> {} {{",
+        "fn {}({}) -> {} {{",
         function.name,
+        params.join(", "),
         function.return_type.name()
     );
 
+    let entry = function.entry().index();
     for (index, block) in function.blocks().iter().enumerate() {
-        let _ = write!(out, "\nblock{index}{}:", block_params(function, block));
+        let header = if index == entry {
+            String::new()
+        } else {
+            block_params(function, block)
+        };
+        let _ = write!(out, "\nblock{index}{header}:");
         for &value in &block.body {
             let _ = write!(
                 out,
@@ -93,6 +107,10 @@ fn inst_text(function: &Function, value: Value) -> String {
                 value_ref(*lhs),
                 value_ref(*rhs)
             )
+        }
+        ValueDef::Inst(InstData::Call { callee, args }) => {
+            let args: Vec<String> = args.iter().map(|&a| value_ref(a)).collect();
+            format!("call {}({})", callee, args.join(", "))
         }
         // Block parameters live in the block header, not the body, so this is
         // never reached for a well-formed function.
@@ -233,6 +251,65 @@ block2:
     br block3(%3)
 block3(%1: int):
     ret %1
+}"
+        );
+    }
+
+    #[test]
+    fn prints_function_parameters_and_calls() {
+        let span = dummy_span();
+        // fn add(%0: int, %1: int) -> int { %2 = add %0, %1; ret %2 }
+        let mut add = Function::new("add", Type::Int);
+        let a = add.append_param(Type::Int, span);
+        let b = add.append_param(Type::Int, span);
+        let entry = add.entry();
+        let sum = add.push_inst(
+            entry,
+            InstData::Binary {
+                op: BinaryOp::Add,
+                lhs: a,
+                rhs: b,
+            },
+            Type::Int,
+            span,
+        );
+        add.set_terminator(entry, Terminator::Ret(sum));
+
+        // fn main() -> int { %0 = 2; %1 = 3; %2 = call add(%0, %1); ret %2 }
+        let mut main = Function::new("main", Type::Int);
+        let m_entry = main.entry();
+        let two = main.push_inst(m_entry, InstData::IConst(2), Type::Int, span);
+        let three = main.push_inst(m_entry, InstData::IConst(3), Type::Int, span);
+        let call = main.push_inst(
+            m_entry,
+            InstData::Call {
+                callee: "add".to_string(),
+                args: vec![two, three],
+            },
+            Type::Int,
+            span,
+        );
+        main.set_terminator(m_entry, Terminator::Ret(call));
+
+        let mut module = Module::new();
+        module.add_function(add);
+        module.add_function(main);
+
+        assert_eq!(
+            print(&module),
+            "\
+fn add(%0: int, %1: int) -> int {
+block0:
+    %2 = add %0, %1
+    ret %2
+}
+
+fn main() -> int {
+block0:
+    %0 = iconst 2
+    %1 = iconst 3
+    %2 = call add(%0, %1)
+    ret %2
 }"
         );
     }

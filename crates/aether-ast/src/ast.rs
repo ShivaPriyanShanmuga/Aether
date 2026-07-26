@@ -29,18 +29,29 @@ impl Item {
     }
 }
 
-/// A function definition: `fn NAME() -> TYPE { ... }`.
-///
-/// Parameters are not represented yet (the minimal grammar accepts only `()`).
+/// A function definition: `fn NAME(PARAMS) -> TYPE { ... }`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FnDecl {
     /// The function's name.
     pub name: Ident,
+    /// The parameters, in declaration order (empty for `()`).
+    pub params: Vec<Param>,
     /// The declared return type.
     pub return_type: Type,
     /// The function body.
     pub body: Block,
     /// The span from the `fn` keyword to the closing brace.
+    pub span: Span,
+}
+
+/// A function parameter: `name: type`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Param {
+    /// The parameter's name.
+    pub name: Ident,
+    /// The parameter's declared type.
+    pub ty: Type,
+    /// The span from the name to the type.
     pub span: Span,
 }
 
@@ -185,6 +196,16 @@ pub enum Expr {
         /// The reference's span.
         span: Span,
     },
+    /// A function call, `callee(args)`. The callee is a bare function name (no
+    /// first-class functions yet).
+    Call {
+        /// The called function's name.
+        callee: String,
+        /// The argument expressions, in order.
+        args: Vec<Expr>,
+        /// The span from the callee to the closing parenthesis.
+        span: Span,
+    },
     /// A placeholder produced when parsing failed here, so that recovery can
     /// continue without cascading errors.
     Error {
@@ -203,6 +224,7 @@ impl Expr {
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Name { span, .. }
+            | Expr::Call { span, .. }
             | Expr::Error { span } => *span,
         }
     }

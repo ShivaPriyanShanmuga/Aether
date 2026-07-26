@@ -57,6 +57,12 @@ impl Printer {
                     f.name.name, f.return_type.name.name
                 ));
                 self.depth += 1;
+                for param in &f.params {
+                    self.line(format!(
+                        "Param \"{}\" \"{}\"",
+                        param.name.name, param.ty.name.name
+                    ));
+                }
                 self.block(&f.body);
                 self.depth -= 1;
             }
@@ -134,6 +140,14 @@ impl Printer {
                 self.depth -= 1;
             }
             Expr::Name { name, .. } => self.line(format!("Name \"{name}\"")),
+            Expr::Call { callee, args, .. } => {
+                self.line(format!("Call \"{callee}\""));
+                self.depth += 1;
+                for arg in args {
+                    self.expr(arg);
+                }
+                self.depth -= 1;
+            }
             Expr::Error { .. } => self.line("Error"),
         }
     }

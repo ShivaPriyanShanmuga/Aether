@@ -41,6 +41,8 @@ pub enum TokenKind {
 
     /// A semicolon `;`.
     Semicolon,
+    /// A colon `:`.
+    Colon,
     /// A comma `,`.
     Comma,
 
@@ -101,6 +103,7 @@ impl TokenKind {
             LBrace => "`{`",
             RBrace => "`}`",
             Semicolon => "`;`",
+            Colon => "`:`",
             Comma => "`,`",
             Plus => "`+`",
             Minus => "`-`",

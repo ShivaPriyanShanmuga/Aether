@@ -157,6 +157,48 @@ fn runs_a_program_with_logical_operators() {
 }
 
 #[test]
+fn runs_a_recursive_program() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_rec_{}.ae", std::process::id()));
+    // Recursive factorial: fact(5) = 120.
+    std::fs::write(
+        &path,
+        b"fn fact(n: int) -> int { if n <= 1 { return 1; } return n * fact(n - 1); } fn main() -> int { return fact(5); }\n",
+    )
+    .expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert!(output.status.success(), "expected success exit code");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "120", "stdout was:\n{stdout}");
+}
+
+#[test]
+fn call_to_unknown_function_is_a_compile_error() {
+    let mut path: PathBuf = std::env::temp_dir();
+    path.push(format!("aetherc_it_nofn_{}.ae", std::process::id()));
+    std::fs::write(&path, b"fn main() -> int { return missing(1); }\n").expect("write temp source");
+
+    let output = aetherc()
+        .arg(&path)
+        .output()
+        .expect("failed to run aetherc");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(output.status.code(), Some(1), "expected COMPILE_ERROR");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot find function `missing`"),
+        "stderr was:\n{stderr}"
+    );
+}
+
+#[test]
 fn unknown_variable_is_a_compile_error() {
     let mut path: PathBuf = std::env::temp_dir();
     path.push(format!("aetherc_it_unknown_{}.ae", std::process::id()));

@@ -15,6 +15,6 @@ mod ast;
 pub mod pretty;
 
 pub use ast::{
-    BinOp, Block, ElseBranch, Expr, FnDecl, Ident, IfStmt, Item, LetStmt, Program, ReturnStmt,
-    Stmt, Type, UnOp,
+    BinOp, Block, ElseBranch, Expr, FnDecl, Ident, IfStmt, Item, LetStmt, Param, Program,
+    ReturnStmt, Stmt, Type, UnOp,
 };

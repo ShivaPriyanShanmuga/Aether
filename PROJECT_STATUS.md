@@ -2,8 +2,8 @@
 
 **Snapshot date:** 2026-07-25
 **Current phase:** Phase 2 — Language & Frontend Depth
-**Current milestone:** M6 — Language expansion 🚧 (slices 1, 2a, 2b, 2c done)
-**Next milestone:** M6 slice 3 — functions: parameters & calls
+**Current milestone:** M6 — Language expansion ✅ **complete** (this session: slice 3)
+**Next milestone:** M7 — Name resolution & scopes
 
 This document is the first thing to read at the start of a session. It reflects
 the repository's actual state, which always takes precedence over any external
@@ -11,17 +11,17 @@ memory or conversation history.
 
 ---
 
-## Current milestone: M6 — Language expansion
+## Last milestone: M6 — Language expansion (complete)
 
-M6 grows the language beyond a single `return`, in slices:
+M6 grew the language beyond a single `return`, in slices:
 
 1. **Local variables & bindings** — ✅ **complete**.
 2. **Control flow** — ✅ **complete** (statement forms), in three steps:
    - **2a — booleans & comparisons** — ✅ **complete**.
    - **2b — statement `if`/`else` & the CFG** — ✅ **complete**.
-   - **2c — SSA merges & short-circuit `&&`/`||`** — ✅ **complete** (this session).
+   - **2c — SSA merges & short-circuit `&&`/`||`** — ✅ **complete**.
      (If-*expressions* remain an optional deferred slice — TD-0029.)
-3. **Functions: parameters & calls** — ⬜ next.
+3. **Functions: parameters & calls** — ✅ **complete** (this session).
 
 ### M6 slice 1 — local variables & bindings (complete)
 
@@ -128,10 +128,42 @@ control-flow piece deferred from 2b — exercised by short-circuit logical opera
 - Tests: **182 total, all passing** (+2 lexer, +2 parser, +1 ast, +4 air, +5
   interp, +2 lower, +1 driver, net of updates).
 
+### M6 slice 3 — functions: parameters & calls (complete)
+
+User-defined functions that take arguments and call one another, including
+recursion. **Function parameters are entry-block parameters** (ADR-0021), reusing
+the block-parameter machinery from 2c: a `call` binds the callee's entry
+parameters from its arguments exactly as a branch binds a block's.
+
+- `aether-lexer`: a `:` token.
+- `aether-ast`: `Param` and `FnDecl.params`; `Expr::Call { callee, args }`; the
+  pretty-printer prints `Param`/`Call` nodes.
+- `aether-parser`: `fn NAME(name: type, …) -> TYPE`; call expressions
+  `callee(args)` (an `Ident` followed by `(`).
+- `aether-air`: `InstData::Call { callee, args }` (referenced by name, ADR-0021),
+  which makes `InstData` `Clone` rather than `Copy`; `Function::append_param`/
+  `params()`; `Module::function_by_name`. The printer shows the signature
+  `fn add(%0: int, %1: int)` and `call add(%0, %1)`.
+- `aether-air` verifier: threads the `Module`; a call's argument arity and types
+  must match the callee's signature, and the result type is the callee's return
+  type; an unknown callee is caught.
+- `aether-lower`: a signature pre-pass (name → return type) types call results;
+  parameters lower to entry-block parameters bound by name; calls lower to the
+  `call` instruction; an unknown callee is a "cannot find function" diagnostic.
+- `aether-air-interp`: threads the `Module`; a `call` runs the callee in a fresh
+  frame with arguments bound to its entry parameters (recursion via the host
+  stack, TD-0031); runtime errors propagate out of calls.
+- Decision: ADR-0021. Resolves TD-0018.
+- Tests: **202 total, all passing** (+2 lexer, +5 parser, +3 lower, +6 interp,
+  +2 air, +2 driver, net of updates).
+
 ---
 
 ## Completed milestones
 
+- **M6 — Language expansion** ✅ — locals, control flow (`if`/`else`, comparisons,
+  booleans, short-circuit `&&`/`||`), and functions with parameters, calls, and
+  recursion. Details above.
 - **M5 — AIR interpreter** ✅ — `aether-air-interp`; `aetherc` runs programs and
   prints `main`'s result. (Phase 1 — First Light complete.)
 - **M4 — AIR core & lowering** ✅ — `aether-air` + `aether-lower`; ADR-0013.
@@ -144,53 +176,53 @@ control-flow piece deferred from 2b — exercised by short-circuit logical opera
 
 ## Current progress
 
-M6 slice 2c is finished; the workspace builds, lints cleanly, and all tests pass.
-There is no in-progress work carried into the next session.
+M6 (slice 3, the final slice) is finished; M6 is complete. The workspace builds,
+lints cleanly, and all tests pass. There is no in-progress work carried into the
+next session.
 
 **Verification (as of this snapshot):**
 - `cargo build --all-targets` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
 - `cargo fmt --all -- --check` — clean
-- `cargo test --all` — 182 passed, 0 failed
+- `cargo test --all` — 202 passed, 0 failed
 
 End-to-end: `aetherc file.ae` for
 `fn main() -> int { let x = 10; let y = x - 3; return x * y; }` prints `70`;
-`fn main() -> int { let n = 7; if n < 0 { return 1; } else if n == 0 { return 2; } else { return n * 2; } }`
-prints `14`; `fn main() -> bool { let x = 5; return x > 0 && x < 10; }` prints
-`true` (via a block-parameter merge); an unknown variable prints "cannot find
-`…` in this scope" and exits `1`.
+`fn main() -> bool { let x = 5; return x > 0 && x < 10; }` prints `true`; and the
+recursive
+`fn fact(n: int) -> int { if n <= 1 { return 1; } return n * fact(n - 1); } fn main() -> int { return fact(5); }`
+prints `120`. An unknown variable/function prints "cannot find …" and exits `1`.
 
 ---
 
 ## Next recommended milestone
 
-**M6 slice 3 — functions: parameters & calls.** Control flow is done; the next
-major language feature is user-defined functions that take arguments and call each
-other. This is the last slice of M6.
+**M7 — Name resolution & scopes.** M6 is complete: the language now has locals,
+control flow, and functions. The natural next step is to lift name resolution out
+of lowering into a dedicated pass, which the codebase has been deferring since
+ADR-0016.
 
-Scope:
-- **Lexer.** A `:` token (for `name: type` parameters) — the last piece TD-0018
-  needs.
-- **AST/parser.** A parameter list in `FnDecl` (`Param { name, type }`); a call
-  expression `Expr::Call { callee, args }`. Decide the call syntax (an identifier
-  callee is enough for now).
-- **AIR.** Function parameters as values (the entry block gains parameters — the
-  block-parameter machinery from 2c already models this), and a `call`
-  instruction referencing a function by name/id with argument values. Extend the
-  verifier: argument arity/type against the callee's signature, and a return-type
-  check.
-- **`aether-lower`.** Bind parameters into the entry scope; lower calls to the
-  `call` instruction. Resolve callee names (still provisional in lowering,
-  ADR-0016).
-- **`aether-air-interp`.** Call frames: evaluate arguments, run the callee with
-  its parameters bound, return its result. Recursion should work.
-- Tests at every layer, plus end-to-end programs that call functions (and a
-  recursive one, e.g. factorial, once `if` + calls combine).
+Why now: lowering currently doubles as a resolver (local names *and* call targets),
+which makes it fallible and mixes concerns (TD-0026). With functions in place there
+are two kinds of names to resolve (locals and functions) and real scope/shadowing
+rules to formalize, so a dedicated pass earns its place.
 
-Alternatively, **if-expressions** (deferred from 2c) are a smaller optional slice:
-they need block-with-tail-expression language design but reuse the existing
-block-parameter merges (TD-0029). Follow the standard workflow: plan, implement,
-leave the repository green with updated docs.
+Suggested scope:
+- A new `aether-sema` crate (or module) housing a **name-resolution pass** that
+  walks the AST, builds scopes, and resolves each identifier to a binding
+  (local/parameter) and each call to a target function — producing resolved
+  references (a step toward the `FuncRef`/`DefId` deferred in ADR-0021).
+- Formalize scope and shadowing rules; diagnose unknown names, unknown functions,
+  and (now) **duplicate function names** (TD-0031) here rather than in lowering.
+- Make lowering **infallible** again: it consumes resolved names and no longer
+  emits diagnostics (reverting the ADR-0016 stopgap; TD-0026).
+- Decide the resolved representation (resolved AST vs. a side table) — an ADR.
+
+This sets up the **type system (M8)**, which builds on resolved names. An
+alternative smaller piece is **if-expressions** (deferred M6 polish; needs
+block-with-tail-expression design, TD-0029). Follow the standard workflow: present
+theory and alternatives, record decisions, plan, then implement — leaving the
+repository green with updated docs.
 
 ---
 
@@ -199,29 +231,30 @@ leave the repository green with updated docs.
 **Green.** Nine crates (eight libraries plus the `aetherc` binary), clean
 one-directional dependencies. `aether-lower` also depends on `aether-diagnostics`
 (a foundational crate — allowed by the dependency rules) because it performs
-provisional name resolution. No cycles, no placeholder crates. AIR is now a
-full SSA CFG: multi-block functions with `br`/`condbr`, a **unified value table**
-(instruction results and block parameters), SSA merges via block parameters
-(ADR-0017/0020), two types (`int`, `bool`), and a CFG-aware verifier
-(reachability + dominance-by-availability + branch arg/type checks) standing in
-for real type checking until M8. Lowering uses a scope stack for lexical block
-scoping and threads a current block so expressions (`&&`/`||`) can branch. The one
-deliberate smudge — resolution living in lowering (ADR-0016) — is tracked (TD-0026)
-with a clear exit (a dedicated pass at M9). `aether-support` and a `Session` type
-remain unneeded (TD-0010).
+provisional name resolution (local names and call targets). No cycles, no
+placeholder crates. AIR is now a full SSA CFG: multi-block functions with
+`br`/`condbr`, a **unified value table** (instruction results and block
+parameters), SSA merges via block parameters (ADR-0017/0020), function parameters
+as entry-block parameters with a `call` instruction (ADR-0021), two types (`int`,
+`bool`), and a CFG-aware verifier (reachability + dominance-by-availability +
+branch/call arg & type checks) standing in for real type checking until M8.
+Lowering uses a scope stack for lexical block scoping and threads a current block
+so expressions (`&&`/`||`) can branch. The one deliberate smudge — resolution
+living in lowering (ADR-0016) — is tracked (TD-0026) with a clear exit (a dedicated
+pass at M7). `aether-support` and a `Session` type remain unneeded (TD-0010).
 
 ---
 
 ## Outstanding work / technical debt
 
 Nothing blocking. Tracked in [`TECH_DEBT.md`](TECH_DEBT.md). Resolved this slice:
-SSA merges / block parameters (TD-0019). Still open from control flow:
-if-expressions (TD-0029, an optional future slice) and the inline dominance
-computation in the verifier (TD-0030, to share the M10 dominator analysis).
-Others: name resolution in lowering (TD-0026, M9), missing-return / literal-range
-checks pending M8 (TD-0020/0021), function parameters awaiting a `:` token
-(TD-0018, slice 3), no `let` type annotations (TD-0028), no AIR text parser
-(TD-0022), overflow policy provisional (TD-0025), parser recovery/depth
-(TD-0016/0017), lexer limits (TD-0011…0015), `Span` packing (TD-0006), diagnostic
-polish (TD-0007/8/9), deferred `Session` (TD-0010), and the hand-rolled CLI →
-`clap` migration (TD-0001).
+function parameters (TD-0018). New: interpreter recursion on the host stack, and
+undiagnosed duplicate function names (TD-0031). The next milestone (M7) will
+resolve: name resolution in lowering (TD-0026). Others: if-expressions (TD-0029,
+optional M6 polish), inline dominance in the verifier (TD-0030, share the M10
+analysis), missing-return / literal-range checks pending M8 (TD-0020/0021), no
+`let` type annotations (TD-0028), no AIR text parser (TD-0022), overflow policy
+provisional (TD-0025), parser recovery/depth (TD-0016/0017), lexer limits
+(TD-0011…0015), `Span` packing (TD-0006), diagnostic polish (TD-0007/8/9),
+deferred `Session` (TD-0010), and the hand-rolled CLI → `clap` migration
+(TD-0001).

@@ -56,7 +56,7 @@ validated against real programs.
 
 Grow the language and give the frontend real semantic teeth.
 
-- **M6 — Language expansion** 🚧 in progress
+- **M6 — Language expansion** ✅
   Grows the language beyond a single `return`. Tackled in slices across sessions,
   in dependency order:
   1. **Local variables & bindings** ✅ — `let`, identifier expressions, and a
@@ -77,10 +77,13 @@ Grow the language and give the frontend real semantic teeth.
        ADR-0017/0020), branch edge-arguments, and short-circuit `&&`/`||`. The
        **expression form of `if`** remains deferred (it needs block-tail-expression
        language design; TD-0029) and can be picked up as a later slice.
-  3. **Functions: parameters & calls** ⬜ ← next — adds a `:` token, parameters, a
-     call instruction, and interpreter call frames.
-- **M7 — Name resolution & scopes** ⬜
-  Resolve identifiers to bindings; scope and shadowing rules.
+  3. **Functions: parameters & calls** ✅ — a `:` token, parameters lowered to
+     entry-block parameters, a `call` instruction, and recursive interpreter call
+     frames (ADR-0021). Callee names resolve provisionally in lowering.
+- **M7 — Name resolution & scopes** ⬜ ← next
+  Resolve identifiers to bindings; scope and shadowing rules. Takes over the
+  provisional name resolution now living in lowering (local names *and* call
+  targets), turning names into resolved references.
 - **M8 — Type system & checking** ⬜
   `aether-sema`: a checkable type system beyond `int`, with clear type-error
   diagnostics.
@@ -140,6 +143,6 @@ add today's code.
 
 ## Next milestone
 
-**M6 — Language expansion**, next slice: **3 — functions: parameters & calls**.
-Control-flow statement forms and short-circuit `&&`/`||` are done; if-expressions
-remain an optional deferred slice. See [`PROJECT_STATUS.md`](PROJECT_STATUS.md).
+**M6 — Language expansion** is complete. Next: **M7 — Name resolution & scopes**
+(if-expressions remain an optional deferred slice of M6). See
+[`PROJECT_STATUS.md`](PROJECT_STATUS.md).

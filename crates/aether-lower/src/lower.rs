@@ -31,11 +31,27 @@ pub struct LowerResult {
 /// [`aether_air::verify`].
 #[must_use]
 pub fn lower(program: &Program) -> LowerResult {
+    // A pre-pass records each function's return type so a call can be typed by its
+    // callee. Callee names are resolved here provisionally (ADR-0016/0021) until
+    // the dedicated name-resolution pass (M9); first declaration wins on a clash.
+    let mut signatures: HashMap<String, Type> = HashMap::new();
+    for item in &program.items {
+        match item {
+            ast::Item::Fn(decl) => {
+                signatures
+                    .entry(decl.name.name.clone())
+                    .or_insert_with(|| lower_type(&decl.return_type));
+            }
+        }
+    }
+
     let mut module = Module::new();
     let mut diagnostics = Vec::new();
     for item in &program.items {
         match item {
-            ast::Item::Fn(decl) => module.add_function(lower_fn(decl, &mut diagnostics)),
+            ast::Item::Fn(decl) => {
+                module.add_function(lower_fn(decl, &signatures, &mut diagnostics))
+            }
         }
     }
     LowerResult {
@@ -44,16 +60,21 @@ pub fn lower(program: &Program) -> LowerResult {
     }
 }
 
-fn lower_fn(decl: &ast::FnDecl, diagnostics: &mut Vec<Diagnostic>) -> Function {
+fn lower_fn(
+    decl: &ast::FnDecl,
+    signatures: &HashMap<String, Type>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Function {
     let function = Function::new(decl.name.name.clone(), lower_type(&decl.return_type));
     let entry = function.entry();
     let mut lowerer = FnLowerer {
         function,
         scopes: Vec::new(),
         current: entry,
+        signatures,
         diagnostics,
     };
-    lowerer.lower_fn_body(&decl.body);
+    lowerer.lower_fn_body(&decl.params, &decl.body);
     lowerer.function
 }
 
@@ -76,13 +97,23 @@ struct FnLowerer<'a> {
     /// The block instructions are currently appended to. It advances as control
     /// flow is lowered (e.g. to a branch's `then`/`else`/join block).
     current: Block,
+    /// Every function's return type, by name, for typing call results (ADR-0021).
+    signatures: &'a HashMap<String, Type>,
     diagnostics: &'a mut Vec<Diagnostic>,
 }
 
 impl FnLowerer<'_> {
-    /// Lower a function body: the whole body is a lexical scope.
-    fn lower_fn_body(&mut self, body: &ast::Block) {
+    /// Lower a function body. Parameters and the body share the function's
+    /// top-level lexical scope.
+    fn lower_fn_body(&mut self, params: &[ast::Param], body: &ast::Block) {
         self.push_scope();
+        // A function's parameters are its entry block's parameters (ADR-0021),
+        // bound by name so the body can refer to them.
+        for param in params {
+            let ty = lower_type(&param.ty);
+            let value = self.function.append_param(ty, param.span);
+            self.bind(param.name.name.clone(), value);
+        }
         self.lower_stmts(&body.stmts);
         self.pop_scope();
         // If control falls through the body without a `return`, `self.current` is
@@ -298,6 +329,34 @@ impl FnLowerer<'_> {
                     // the program from being run.
                     self.function
                         .push_inst(self.current, InstData::IConst(0), Type::Int, *span)
+                }
+            }
+            Expr::Call { callee, args, span } => {
+                // The result type is the callee's return type (provisional
+                // resolution, ADR-0021). Look it up before lowering args so an
+                // unknown callee is reported once.
+                let ret_ty = self.signatures.get(callee).copied();
+                // Arguments are lowered left to right; each may itself branch
+                // (e.g. contain `&&`), advancing the current block.
+                let mut arg_values = Vec::with_capacity(args.len());
+                for arg in args {
+                    arg_values.push(self.lower_expr(arg));
+                }
+                match ret_ty {
+                    Some(ty) => self.function.push_inst(
+                        self.current,
+                        InstData::Call {
+                            callee: callee.clone(),
+                            args: arg_values,
+                        },
+                        ty,
+                        *span,
+                    ),
+                    None => {
+                        self.error(*span, format!("cannot find function `{callee}`"));
+                        self.function
+                            .push_inst(self.current, InstData::IConst(0), Type::Int, *span)
+                    }
                 }
             }
             // Poison nodes never reach lowering (it runs only after a clean parse);
@@ -633,6 +692,44 @@ block2(%6: bool):
             air.contains("condbr %2, block2("),
             "true edge to merge:\n{air}"
         );
+    }
+
+    #[test]
+    fn lowers_function_parameters_and_calls() {
+        assert_eq!(
+            lower_str(
+                "fn add(a: int, b: int) -> int { return a + b; } \
+                 fn main() -> int { return add(2, 3); }"
+            ),
+            "\
+fn add(%0: int, %1: int) -> int {
+block0:
+    %2 = add %0, %1
+    ret %2
+}
+
+fn main() -> int {
+block0:
+    %0 = iconst 2
+    %1 = iconst 3
+    %2 = call add(%0, %1)
+    ret %2
+}"
+        );
+    }
+
+    #[test]
+    fn parameters_are_bound_in_the_body() {
+        let (_air, diags) =
+            lower_checked("fn f(x: int) -> int { return x; } fn main() -> int { return 0; }");
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    }
+
+    #[test]
+    fn call_to_unknown_function_is_a_diagnostic() {
+        let (_air, diags) = lower_checked("fn main() -> int { return nope(1); }");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("cannot find function `nope`"));
     }
 
     #[test]

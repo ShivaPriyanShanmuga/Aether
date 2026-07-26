@@ -667,3 +667,48 @@ The value table stores instruction data inline, keeping the common accessors
 feature, **if-expressions**, is still deferred (it needs block-with-tail-expression
 language design; TD-0029). Overflow and type-checking provisions (ADR-0015/0018)
 are unchanged.
+
+---
+
+## ADR-0021 — Functions: parameters as entry-block parameters; calls by name
+
+**Status:** Accepted *(provisional resolution per [ADR-0016](#adr-0016--local-variables-lower-via-an-ssa-name-environment-lowering-resolves-names-provisionally); callee names resolve properly at M7)*
+
+**Context.** M6 slice 3 adds user-defined functions with parameters and calls — the
+final M6 slice. Two decisions: how AIR represents function parameters, and how a
+call names its callee.
+
+**Decision.**
+- **Function parameters are the entry block's parameters.** This reuses the
+  block-parameter mechanism (ADR-0017/0020): a call binds the callee's entry-block
+  parameters from its argument values exactly as a branch binds a successor's
+  parameters from its edge arguments. `Function::append_param`/`params()` are
+  conveniences over the entry block. The verifier already treats block parameters
+  (the entry's included) as definitions available at their block, and the
+  interpreter's parameter-binding path is shared.
+- **Calls reference the callee by name.** `InstData::Call { callee: String, args }`.
+  Resolution is provisional in lowering (consistent with ADR-0016 for local names):
+  a pre-pass records each function's return type so a call can be typed, and an
+  unknown callee is reported as a "cannot find function" diagnostic. A resolved
+  function reference is deferred to the dedicated name-resolution pass (M7), which
+  will resolve local names and call targets uniformly.
+- **`InstData` becomes `Clone` (not `Copy`)** because `Call` owns a name and
+  argument list; `verify`/`interp` match it by reference and thread the `Module` to
+  resolve callees. The verifier checks a call's argument arity and types against the
+  callee's signature and that the result type is the callee's return type.
+- **Calls run in recursive frames.** The interpreter evaluates a call by running
+  the callee in a fresh value frame with its arguments bound; runtime errors
+  propagate out. Recursion uses the host stack.
+
+**Alternatives considered.** *Callee by index (`FuncRef`, à la Cranelift)* — the
+canonical resolved form, but premature before the M7 resolution pass and
+inconsistent with the still-provisional local-name resolution; adopt it uniformly
+at M7. *A parameter concept distinct from block parameters* — rejected; entry-block
+parameters model function parameters exactly and avoid duplicate machinery.
+
+**Consequences.** Functions with parameters, calls, and recursion work end to end
+(e.g. `fact(5)` → `120`). Resolves TD-0018 (function parameters needed the `:`
+token). Unbounded recursion can overflow the host stack (TD-0031). Callee and local
+name resolution remain provisional in lowering (TD-0026) until M7. Duplicate
+function names are not diagnosed yet (first declaration wins); a real check arrives
+with name resolution/semantics.
